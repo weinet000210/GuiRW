@@ -12,6 +12,8 @@ STATIC CONST CHAR16  *mMainItems[] = {
   L"2. Memory / MMIO",
   L"3. IO Space",
   L"4. MSR",
+  L"5. SMBIOS",
+  L"6. USB Devices",
   L"Q. Quit",
 };
 
@@ -34,7 +36,7 @@ UefiMain (
   Last = 0;
   for ( ; ;) {
     Choice = UiMenu (L"Main Menu", mMainItems, ARRAY_SIZE (mMainItems), Last);
-    if ((Choice < 0) || (Choice == 4)) {
+    if ((Choice < 0) || (Choice == 6)) {
       break;
     }
 
@@ -51,6 +53,12 @@ UefiMain (
         break;
       case 3:
         MsrViewRun ();
+        break;
+      case 4:
+        SmbiosViewRun ();
+        break;
+      case 5:
+        UsbViewRun ();
         break;
       default:
         break;

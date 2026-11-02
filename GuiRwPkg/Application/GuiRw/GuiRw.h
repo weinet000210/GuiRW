@@ -16,7 +16,7 @@
 #include <Library/PrintLib.h>
 #include <Library/IoLib.h>
 
-#define GUIRW_VERSION  L"0.2.0"
+#define GUIRW_VERSION  L"0.3.0"
 
 //
 // Colors
@@ -177,6 +177,83 @@ IoViewRun (
 
 VOID
 MsrViewRun (
+  VOID
+  );
+
+//
+// Doc.c
+//
+typedef struct {
+  CHAR16    *Text;
+  UINT8     Attr;
+  INTN      Tag;      // >= 0: selectable item id
+} DOC_LINE;
+
+typedef struct {
+  DOC_LINE    *Lines;
+  UINTN       Count;
+  UINTN       Capacity;
+} TEXT_DOC;
+
+VOID
+DocInit (
+  OUT TEXT_DOC  *Doc
+  );
+
+VOID
+DocFree (
+  IN OUT TEXT_DOC  *Doc
+  );
+
+VOID
+EFIAPI
+DocAdd (
+  IN OUT TEXT_DOC  *Doc,
+  IN UINTN         Attr,
+  IN CONST CHAR16  *Fmt,
+  ...
+  );
+
+VOID
+EFIAPI
+DocAddItem (
+  IN OUT TEXT_DOC  *Doc,
+  IN INTN          Tag,
+  IN CONST CHAR16  *Fmt,
+  ...
+  );
+
+VOID
+DocAddHex (
+  IN OUT TEXT_DOC  *Doc,
+  IN CONST UINT8   *Data,
+  IN UINTN         Size,
+  IN UINTN         Base
+  );
+
+VOID
+DocView (
+  IN CONST CHAR16  *Title,
+  IN CONST CHAR16  *Header,
+  IN TEXT_DOC      *Doc
+  );
+
+INTN
+DocSelect (
+  IN CONST CHAR16  *Title,
+  IN CONST CHAR16  *Help,
+  IN CONST CHAR16  *Header,
+  IN TEXT_DOC      *Doc,
+  IN OUT UINTN     *Sel
+  );
+
+VOID
+SmbiosViewRun (
+  VOID
+  );
+
+VOID
+UsbViewRun (
   VOID
   );
 

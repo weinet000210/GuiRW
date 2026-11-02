@@ -9,7 +9,7 @@
   BASE_NAME                      = GuiRw
   FILE_GUID                      = 3D7A1F52-6C8B-4E29-A0D4-9B1E5F7C2A63
   MODULE_TYPE                    = UEFI_APPLICATION
-  VERSION_STRING                 = 0.1
+  VERSION_STRING                 = 0.3
   ENTRY_POINT                    = UefiMain
 
 [Sources]
@@ -22,6 +22,9 @@
   MemView.c
   IoView.c
   MsrView.c
+  Doc.c
+  SmbiosView.c
+  UsbView.c
 
 [Packages]
   MdePkg/MdePkg.dec
@@ -35,8 +38,17 @@
   MemoryAllocationLib
   PrintLib
   IoLib
+  DevicePathLib
 
 [Protocols]
   gEfiPciRootBridgeIoProtocolGuid               ## CONSUMES
   gEfiGraphicsOutputProtocolGuid                ## SOMETIMES_CONSUMES
   gEfiCpuArchProtocolGuid                       ## SOMETIMES_CONSUMES
+  gEfiUsbIoProtocolGuid                         ## SOMETIMES_CONSUMES
+  gEfiUsb2HcProtocolGuid                        ## SOMETIMES_CONSUMES
+  gEfiPciIoProtocolGuid                         ## SOMETIMES_CONSUMES
+  gEfiDevicePathProtocolGuid                    ## SOMETIMES_CONSUMES
+
+[Guids]
+  gEfiSmbiosTableGuid                           ## SOMETIMES_CONSUMES
+  gEfiSmbios3TableGuid                          ## SOMETIMES_CONSUMES
