@@ -1,0 +1,40 @@
+## @file
+#  GuiRW - text-mode RW-Everything style hardware utility for the UEFI Shell.
+#
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = GuiRw
+  FILE_GUID                      = 3D7A1F52-6C8B-4E29-A0D4-9B1E5F7C2A63
+  MODULE_TYPE                    = UEFI_APPLICATION
+  VERSION_STRING                 = 0.1
+  ENTRY_POINT                    = UefiMain
+
+[Sources]
+  GuiRw.c
+  GuiRw.h
+  Ui.c
+  HexEdit.c
+  PciView.c
+  MemView.c
+  IoView.c
+  MsrView.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+
+[LibraryClasses]
+  UefiApplicationEntryPoint
+  UefiBootServicesTableLib
+  UefiLib
+  BaseLib
+  BaseMemoryLib
+  MemoryAllocationLib
+  PrintLib
+  IoLib
+
+[Protocols]
+  gEfiPciRootBridgeIoProtocolGuid               ## CONSUMES
+  gEfiCpuArchProtocolGuid                       ## SOMETIMES_CONSUMES

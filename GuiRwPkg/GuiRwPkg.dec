@@ -1,0 +1,13 @@
+## @file
+#  GuiRwPkg - text-mode hardware read/write utility for UEFI.
+#
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  DEC_SPECIFICATION              = 0x00010005
+  PACKAGE_NAME                   = GuiRwPkg
+  PACKAGE_GUID                   = 6B1C4E6A-2F7D-4C1B-9D5E-3A8F0C2B7E41
+  PACKAGE_VERSION                = 0.1
+
+[Includes]
