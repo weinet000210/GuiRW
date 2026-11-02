@@ -16,6 +16,7 @@
   GuiRw.c
   GuiRw.h
   Ui.c
+  Font.c
   HexEdit.c
   PciView.c
   MemView.c
@@ -37,4 +38,5 @@
 
 [Protocols]
   gEfiPciRootBridgeIoProtocolGuid               ## CONSUMES
+  gEfiGraphicsOutputProtocolGuid                ## SOMETIMES_CONSUMES
   gEfiCpuArchProtocolGuid                       ## SOMETIMES_CONSUMES

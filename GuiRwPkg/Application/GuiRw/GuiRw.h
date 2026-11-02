@@ -16,7 +16,7 @@
 #include <Library/PrintLib.h>
 #include <Library/IoLib.h>
 
-#define GUIRW_VERSION  L"0.1.0"
+#define GUIRW_VERSION  L"0.2.0"
 
 //
 // Colors
@@ -79,6 +79,22 @@ VOID
 UiFillLine (
   IN UINTN  Row,
   IN UINTN  Attr
+  );
+
+VOID
+UiFlush (
+  VOID
+  );
+
+BOOLEAN
+UiCycleScale (
+  VOID
+  );
+
+VOID
+UiModeText (
+  OUT CHAR16  *Buf,
+  IN  UINTN   BufSize
   );
 
 VOID

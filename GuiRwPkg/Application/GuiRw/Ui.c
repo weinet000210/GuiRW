@@ -1,23 +1,197 @@
 /** @file
-  Text-mode screen helpers built on EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL.
+  Text-mode screen layer.
+
+  All drawing goes into a shadow cell buffer (character + attribute per cell).
+  UiFlush(), called before every key read, compares it with what is already
+  on screen and sends only the changed spans:
+
+  - GOP backend (preferred): GuiRW draws glyphs itself with the edk2 8x19
+    font, integer-scaled so the grid fills the panel at its native resolution
+    (no dependence on how the firmware console maps text modes, and nothing
+    is mirrored to a serial redirection console).
+  - ConOut backend (fallback when no GOP): changed spans are written with
+    SimpleTextOut, grouped by attribute.
 
   SPDX-License-Identifier: BSD-2-Clause-Patent
 **/
 
 #include "GuiRw.h"
+#include <Protocol/GraphicsOutput.h>
+#include <Uefi/UefiInternalFormRepresentation.h>
+
+#define GLYPH_W      EFI_GLYPH_WIDTH
+#define GLYPH_H      EFI_GLYPH_HEIGHT
+#define MAX_COLS     255
+#define MAX_ROWS     128
+#define MIN_COLS     100
+#define MIN_ROWS     25
+#define ATTR_UNDRAWN 0xFF
+
+extern EFI_NARROW_GLYPH  gGuiRwGlyphs[];
+extern UINTN             gGuiRwGlyphCount;
+
+typedef struct {
+  CHAR16    Ch;
+  UINT8     Attr;
+} UI_CELL;
 
 UINTN  gScreenCols = 80;
 UINTN  gScreenRows = 25;
+
+STATIC UI_CELL                        *mCells;      // what the views want
+STATIC UI_CELL                        *mDrawn;      // what is on screen
+STATIC EFI_GRAPHICS_OUTPUT_PROTOCOL   *mGop;
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL  *mRowBuf;     // one text row of pixels
+STATIC UINTN                          mScale = 1;
+STATIC UINTN                          mOriginX;
+STATIC UINTN                          mOriginY;
+STATIC CONST UINT8                    *mGlyph[128];
 
 STATIC INT32    mSavedMode = -1;
 STATIC UINTN    mSavedAttr;
 STATIC BOOLEAN  mSavedCursor;
 
-/**
-  Pick the largest text mode (prefer >= 100 columns), hide the cursor.
-**/
+//
+// Standard VGA 16-color palette, indexed by EFI color value.
+//
+STATIC CONST EFI_GRAPHICS_OUTPUT_BLT_PIXEL  mPalette[16] = {
+  //  Blue  Green Red  Reserved
+  { 0x00, 0x00, 0x00, 0 }, // BLACK
+  { 0x98, 0x00, 0x00, 0 }, // BLUE
+  { 0x00, 0x98, 0x00, 0 }, // GREEN
+  { 0x98, 0x98, 0x00, 0 }, // CYAN
+  { 0x00, 0x00, 0x98, 0 }, // RED
+  { 0x98, 0x00, 0x98, 0 }, // MAGENTA
+  { 0x00, 0x98, 0x98, 0 }, // BROWN
+  { 0xA8, 0xA8, 0xA8, 0 }, // LIGHTGRAY
+  { 0x50, 0x50, 0x50, 0 }, // DARKGRAY
+  { 0xFF, 0x50, 0x50, 0 }, // LIGHTBLUE
+  { 0x50, 0xFF, 0x50, 0 }, // LIGHTGREEN
+  { 0xFF, 0xFF, 0x50, 0 }, // LIGHTCYAN
+  { 0x50, 0x50, 0xFF, 0 }, // LIGHTRED
+  { 0xFF, 0x50, 0xFF, 0 }, // LIGHTMAGENTA
+  { 0x50, 0xFF, 0xFF, 0 }, // YELLOW
+  { 0xFF, 0xFF, 0xFF, 0 }, // WHITE
+};
+
+STATIC
 VOID
-UiInit (
+BuildGlyphMap (
+  VOID
+  )
+{
+  UINTN  Index;
+
+  for (Index = 0; Index < gGuiRwGlyphCount; Index++) {
+    if ((gGuiRwGlyphs[Index].UnicodeWeight >= 0x20) && (gGuiRwGlyphs[Index].UnicodeWeight < 0x7F)) {
+      mGlyph[gGuiRwGlyphs[Index].UnicodeWeight] = gGuiRwGlyphs[Index].GlyphCol1;
+    }
+  }
+}
+
+/**
+  Largest integer scale that still leaves at least MIN_COLS x MIN_ROWS cells.
+**/
+STATIC
+UINTN
+AutoScale (
+  IN UINTN  HRes,
+  IN UINTN  VRes
+  )
+{
+  UINTN  Scale;
+
+  for (Scale = 8; Scale > 1; Scale--) {
+    if ((HRes / (GLYPH_W * Scale) >= MIN_COLS) && (VRes / (GLYPH_H * Scale) >= MIN_ROWS)) {
+      return Scale;
+    }
+  }
+
+  return 1;
+}
+
+STATIC
+VOID
+FillScreenPixels (
+  IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL  Color
+  )
+{
+  mGop->Blt (
+          mGop,
+          &Color,
+          EfiBltVideoFill,
+          0,
+          0,
+          0,
+          0,
+          mGop->Mode->Info->HorizontalResolution,
+          mGop->Mode->Info->VerticalResolution,
+          0
+          );
+}
+
+/**
+  (Re)compute the grid for the current GOP resolution and scale, and
+  reallocate the cell buffers. Marks everything undrawn.
+**/
+STATIC
+BOOLEAN
+SetupGrid (
+  VOID
+  )
+{
+  UINTN  HRes;
+  UINTN  VRes;
+  UINTN  Count;
+  UINTN  Index;
+
+  if (mGop != NULL) {
+    HRes        = mGop->Mode->Info->HorizontalResolution;
+    VRes        = mGop->Mode->Info->VerticalResolution;
+    gScreenCols = MIN (HRes / (GLYPH_W * mScale), MAX_COLS);
+    gScreenRows = MIN (VRes / (GLYPH_H * mScale), MAX_ROWS);
+    mOriginX    = (HRes - gScreenCols * GLYPH_W * mScale) / 2;
+    mOriginY    = (VRes - gScreenRows * GLYPH_H * mScale) / 2;
+    if (mRowBuf != NULL) {
+      FreePool (mRowBuf);
+    }
+
+    mRowBuf = AllocatePool (gScreenCols * GLYPH_W * mScale * GLYPH_H * mScale * sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL));
+    if (mRowBuf == NULL) {
+      return FALSE;
+    }
+
+    FillScreenPixels (mPalette[EFI_BLUE]);
+  }
+
+  if (mCells != NULL) {
+    FreePool (mCells);
+  }
+
+  if (mDrawn != NULL) {
+    FreePool (mDrawn);
+  }
+
+  Count  = gScreenCols * gScreenRows;
+  mCells = AllocatePool (Count * sizeof (UI_CELL));
+  mDrawn = AllocatePool (Count * sizeof (UI_CELL));
+  if ((mCells == NULL) || (mDrawn == NULL)) {
+    return FALSE;
+  }
+
+  for (Index = 0; Index < Count; Index++) {
+    mCells[Index].Ch   = L' ';
+    mCells[Index].Attr = (UINT8)ATTR_NORMAL;
+    mDrawn[Index].Ch   = 0;
+    mDrawn[Index].Attr = ATTR_UNDRAWN;
+  }
+
+  return TRUE;
+}
+
+STATIC
+VOID
+SetupConOutMode (
   VOID
   )
 {
@@ -28,11 +202,7 @@ UiInit (
   UINTN                            Rows;
   UINTN                            BestArea;
 
-  Out          = gST->ConOut;
-  mSavedMode   = Out->Mode->Mode;
-  mSavedAttr   = (UINTN)Out->Mode->Attribute;
-  mSavedCursor = Out->Mode->CursorVisible;
-
+  Out      = gST->ConOut;
   BestMode = Out->Mode->Mode;
   BestArea = 0;
   for (Mode = 0; Mode < Out->Mode->MaxMode; Mode++) {
@@ -40,10 +210,7 @@ UiInit (
       continue;
     }
 
-    //
-    // Keep it readable: cap at 160x50 so huge GOP modes don't give tiny text.
-    //
-    if ((Cols > 160) || (Rows > 50)) {
+    if ((Cols > MAX_COLS) || (Rows > MAX_ROWS)) {
       continue;
     }
 
@@ -61,10 +228,49 @@ UiInit (
     gScreenCols = 80;
     gScreenRows = 25;
   }
+}
 
+VOID
+UiInit (
+  VOID
+  )
+{
+  EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL  *Out;
+  EFI_STATUS                       Status;
+
+  Out          = gST->ConOut;
+  mSavedMode   = Out->Mode->Mode;
+  mSavedAttr   = (UINTN)Out->Mode->Attribute;
+  mSavedCursor = Out->Mode->CursorVisible;
   Out->EnableCursor (Out, FALSE);
   Out->SetAttribute (Out, ATTR_NORMAL);
   Out->ClearScreen (Out);
+
+  BuildGlyphMap ();
+
+  Status = gBS->HandleProtocol (gST->ConsoleOutHandle, &gEfiGraphicsOutputProtocolGuid, (VOID **)&mGop);
+  if (EFI_ERROR (Status)) {
+    Status = gBS->LocateProtocol (&gEfiGraphicsOutputProtocolGuid, NULL, (VOID **)&mGop);
+  }
+
+  if (EFI_ERROR (Status) || (mGop == NULL) || (mGop->Mode == NULL) || (mGop->Mode->Info == NULL)) {
+    mGop = NULL;
+  }
+
+  if (mGop != NULL) {
+    mScale = AutoScale (mGop->Mode->Info->HorizontalResolution, mGop->Mode->Info->VerticalResolution);
+  } else {
+    SetupConOutMode ();
+  }
+
+  if (!SetupGrid ()) {
+    //
+    // Out of memory with GOP buffers: fall back to plain ConOut.
+    //
+    mGop = NULL;
+    SetupConOutMode ();
+    SetupGrid ();
+  }
 }
 
 VOID
@@ -75,84 +281,299 @@ UiRestore (
   EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL  *Out;
 
   Out = gST->ConOut;
+  if (mGop != NULL) {
+    FillScreenPixels (mPalette[EFI_BLACK]);
+  }
+
   Out->SetAttribute (Out, mSavedAttr);
-  Out->ClearScreen (Out);
   if ((mSavedMode >= 0) && (mSavedMode != Out->Mode->Mode)) {
     Out->SetMode (Out, (UINTN)mSavedMode);
   }
 
+  Out->ClearScreen (Out);
   Out->EnableCursor (Out, mSavedCursor);
 }
+
+/**
+  Cycle the GOP scale (F2). Returns TRUE when the grid changed; the caller
+  must redraw everything.
+**/
+BOOLEAN
+UiCycleScale (
+  VOID
+  )
+{
+  UINTN  HRes;
+  UINTN  VRes;
+  UINTN  Max;
+  UINTN  Next;
+
+  if (mGop == NULL) {
+    return FALSE;
+  }
+
+  HRes = mGop->Mode->Info->HorizontalResolution;
+  VRes = mGop->Mode->Info->VerticalResolution;
+
+  //
+  // Largest scale that still fits the minimum 80x24 layout.
+  //
+  for (Max = 8; Max > 1; Max--) {
+    if ((HRes / (GLYPH_W * Max) >= 80) && (VRes / (GLYPH_H * Max) >= 24)) {
+      break;
+    }
+  }
+
+  Next = (mScale >= Max) ? 1 : mScale + 1;
+  if (Next == mScale) {
+    return FALSE;
+  }
+
+  mScale = Next;
+  return SetupGrid ();
+}
+
+VOID
+UiModeText (
+  OUT CHAR16  *Buf,
+  IN  UINTN   BufSize
+  )
+{
+  if (mGop != NULL) {
+    UnicodeSPrint (
+      Buf,
+      BufSize,
+      L"%dx%d  %dx%d  font x%d",
+      mGop->Mode->Info->HorizontalResolution,
+      mGop->Mode->Info->VerticalResolution,
+      gScreenCols,
+      gScreenRows,
+      mScale
+      );
+  } else {
+    UnicodeSPrint (Buf, BufSize, L"text %dx%d", gScreenCols, gScreenRows);
+  }
+}
+
+//
+// ---- Flush -----------------------------------------------------------------
+//
+
+STATIC
+VOID
+GopDrawSpan (
+  IN UINTN  Row,
+  IN UINTN  First,
+  IN UINTN  Last
+  )
+{
+  UINTN                          Cells;
+  UINTN                          PixW;
+  UINTN                          PixH;
+  UINTN                          Col;
+  UINTN                          Y;
+  UINTN                          X;
+  UINTN                          Sx;
+  UINTN                          Sy;
+  UI_CELL                        *Cell;
+  CONST UINT8                    *Glyph;
+  UINT8                          Bits;
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL  Fg;
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL  Bg;
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL  *Line;
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL  Pixel;
+
+  Cells = Last - First + 1;
+  PixW  = Cells * GLYPH_W * mScale;
+  PixH  = GLYPH_H * mScale;
+
+  for (Col = First; Col <= Last; Col++) {
+    Cell  = &mCells[Row * gScreenCols + Col];
+    Fg    = mPalette[Cell->Attr & 0x0F];
+    Bg    = mPalette[(Cell->Attr >> 4) & 0x07];
+    Glyph = (Cell->Ch < 128) ? mGlyph[Cell->Ch] : NULL;
+    if (Glyph == NULL) {
+      Glyph = mGlyph[L'?'];
+      if (Cell->Ch == L' ') {
+        Glyph = mGlyph[L' '];
+      }
+    }
+
+    for (Y = 0; Y < GLYPH_H; Y++) {
+      Bits = (Glyph != NULL) ? Glyph[Y] : 0;
+      Line = mRowBuf + (Y * mScale) * PixW + (Col - First) * GLYPH_W * mScale;
+      for (X = 0; X < GLYPH_W; X++) {
+        Pixel = (Bits & (0x80 >> X)) ? Fg : Bg;
+        for (Sx = 0; Sx < mScale; Sx++) {
+          Line[X * mScale + Sx] = Pixel;
+        }
+      }
+
+      //
+      // Replicate the scanline for vertical scaling.
+      //
+      for (Sy = 1; Sy < mScale; Sy++) {
+        CopyMem (Line + Sy * PixW, Line, GLYPH_W * mScale * sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL));
+      }
+    }
+  }
+
+  mGop->Blt (
+          mGop,
+          mRowBuf,
+          EfiBltBufferToVideo,
+          0,
+          0,
+          mOriginX + First * GLYPH_W * mScale,
+          mOriginY + Row * PixH,
+          PixW,
+          PixH,
+          PixW * sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL)
+          );
+}
+
+STATIC
+VOID
+ConOutDrawSpan (
+  IN UINTN  Row,
+  IN UINTN  First,
+  IN UINTN  Last
+  )
+{
+  CHAR16   Buf[MAX_COLS + 1];
+  UINTN    Col;
+  UINTN    Start;
+  UINTN    Len;
+  UINT8    Attr;
+  UI_CELL  *Line;
+
+  //
+  // Never write the bottom-right cell: it would scroll the console.
+  //
+  if ((Row == gScreenRows - 1) && (Last == gScreenCols - 1)) {
+    if (Last == First) {
+      return;
+    }
+
+    Last--;
+  }
+
+  Line = &mCells[Row * gScreenCols];
+  Col  = First;
+  while (Col <= Last) {
+    Start = Col;
+    Attr  = Line[Col].Attr;
+    Len   = 0;
+    while ((Col <= Last) && (Line[Col].Attr == Attr)) {
+      Buf[Len++] = (Line[Col].Ch >= 0x20) ? Line[Col].Ch : L' ';
+      Col++;
+    }
+
+    Buf[Len] = L'\0';
+    gST->ConOut->SetAttribute (gST->ConOut, Attr);
+    gST->ConOut->SetCursorPosition (gST->ConOut, Start, Row);
+    gST->ConOut->OutputString (gST->ConOut, Buf);
+  }
+}
+
+VOID
+UiFlush (
+  VOID
+  )
+{
+  UINTN  Row;
+  UINTN  Col;
+  UINTN  First;
+  UINTN  Last;
+  UINTN  Base;
+
+  for (Row = 0; Row < gScreenRows; Row++) {
+    Base  = Row * gScreenCols;
+    First = MAX_UINTN;
+    Last  = 0;
+    for (Col = 0; Col < gScreenCols; Col++) {
+      if ((mCells[Base + Col].Ch != mDrawn[Base + Col].Ch) ||
+          (mCells[Base + Col].Attr != mDrawn[Base + Col].Attr))
+      {
+        if (First == MAX_UINTN) {
+          First = Col;
+        }
+
+        Last = Col;
+      }
+    }
+
+    if (First == MAX_UINTN) {
+      continue;
+    }
+
+    if (mGop != NULL) {
+      GopDrawSpan (Row, First, Last);
+    } else {
+      ConOutDrawSpan (Row, First, Last);
+    }
+
+    CopyMem (&mDrawn[Base + First], &mCells[Base + First], (Last - First + 1) * sizeof (UI_CELL));
+  }
+}
+
+//
+// ---- Drawing into the shadow buffer ----------------------------------------
+//
 
 VOID
 UiClear (
   VOID
   )
 {
-  gST->ConOut->SetAttribute (gST->ConOut, ATTR_NORMAL);
-  gST->ConOut->ClearScreen (gST->ConOut);
+  UINTN  Row;
+
+  for (Row = 0; Row < gScreenRows; Row++) {
+    UiFillLine (Row, ATTR_NORMAL);
+  }
 }
 
-/**
-  Fill a whole row with spaces in the given attribute.
-  The last cell of the last row is skipped to avoid scrolling the console.
-**/
 VOID
 UiFillLine (
   IN UINTN  Row,
   IN UINTN  Attr
   )
 {
-  CHAR16  Line[256];
-  UINTN   Len;
-  UINTN   Index;
+  UINTN    Col;
+  UI_CELL  *Line;
 
-  Len = gScreenCols;
-  if (Row == gScreenRows - 1) {
-    Len--;
+  if (Row >= gScreenRows) {
+    return;
   }
 
-  if (Len > ARRAY_SIZE (Line) - 1) {
-    Len = ARRAY_SIZE (Line) - 1;
+  Line = &mCells[Row * gScreenCols];
+  for (Col = 0; Col < gScreenCols; Col++) {
+    Line[Col].Ch   = L' ';
+    Line[Col].Attr = (UINT8)Attr;
   }
-
-  for (Index = 0; Index < Len; Index++) {
-    Line[Index] = L' ';
-  }
-
-  Line[Len] = L'\0';
-  gST->ConOut->SetAttribute (gST->ConOut, Attr);
-  gST->ConOut->SetCursorPosition (gST->ConOut, 0, Row);
-  gST->ConOut->OutputString (gST->ConOut, Line);
 }
 
 STATIC
 VOID
-UiPutClipped (
-  IN UINTN   Col,
-  IN UINTN   Row,
-  IN UINTN   Attr,
-  IN CHAR16  *Text
+UiPut (
+  IN UINTN         Col,
+  IN UINTN         Row,
+  IN UINTN         Attr,
+  IN CONST CHAR16  *Text
   )
 {
-  UINTN  Max;
+  UI_CELL  *Cell;
 
-  if ((Col >= gScreenCols) || (Row >= gScreenRows)) {
+  if (Row >= gScreenRows) {
     return;
   }
 
-  Max = gScreenCols - Col;
-  if (Row == gScreenRows - 1) {
-    Max--;
+  Cell = &mCells[Row * gScreenCols];
+  while ((*Text != L'\0') && (Col < gScreenCols)) {
+    Cell[Col].Ch   = *Text++;
+    Cell[Col].Attr = (UINT8)Attr;
+    Col++;
   }
-
-  if (StrLen (Text) > Max) {
-    Text[Max] = L'\0';
-  }
-
-  gST->ConOut->SetAttribute (gST->ConOut, Attr);
-  gST->ConOut->SetCursorPosition (gST->ConOut, Col, Row);
-  gST->ConOut->OutputString (gST->ConOut, Text);
 }
 
 VOID
@@ -171,7 +592,7 @@ UiPrintAt (
   VA_START (Args, Fmt);
   UnicodeVSPrint (Buf, sizeof (Buf), Fmt, Args);
   VA_END (Args);
-  UiPutClipped (Col, Row, Attr, Buf);
+  UiPut (Col, Row, Attr, Buf);
 }
 
 /**
@@ -213,7 +634,7 @@ UiStatus (
   UnicodeVSPrint (Buf, sizeof (Buf), Fmt, Args);
   VA_END (Args);
   UiFillLine (gScreenRows - 2, ATTR_NORMAL);
-  UiPutClipped (1, gScreenRows - 2, Attr, Buf);
+  UiPut (1, gScreenRows - 2, Attr, Buf);
 }
 
 VOID
@@ -223,6 +644,7 @@ UiReadKey (
 {
   UINTN  Index;
 
+  UiFlush ();
   for ( ; ;) {
     gBS->WaitForEvent (1, &gST->ConIn->WaitForKey, &Index);
     if (!EFI_ERROR (gST->ConIn->ReadKeyStroke (gST->ConIn, Key))) {
@@ -341,6 +763,7 @@ UiConfirm (
 
 /**
   Vertical menu. Returns the chosen index, or -1 on Esc.
+  F2 cycles the font scale (GOP backend only).
 **/
 INTN
 UiMenu (
@@ -352,19 +775,24 @@ UiMenu (
 {
   UINTN          Sel;
   UINTN          Index;
-  UINTN          Top;
-  UINTN          Left;
   EFI_INPUT_KEY  Key;
+  CHAR16         Mode[64];
+  BOOLEAN        Redraw;
 
-  Sel  = (Initial < Count) ? Initial : 0;
-  Top  = 3;
-  Left = 4;
-  UiFrame (Title, L"Up/Down: select   Enter: open   Esc: back/exit");
+  Sel    = (Initial < Count) ? Initial : 0;
+  Redraw = TRUE;
   for ( ; ;) {
+    if (Redraw) {
+      UiFrame (Title, L"Up/Down: select   Enter: open   F2: font size   Esc: back/exit");
+      UiModeText (Mode, sizeof (Mode));
+      UiPrintAt (gScreenCols - StrLen (Mode) - 2, 0, ATTR_TITLE, L"%s", Mode);
+      Redraw = FALSE;
+    }
+
     for (Index = 0; Index < Count; Index++) {
       UiPrintAt (
-        Left,
-        Top + Index,
+        4,
+        3 + Index,
         (Index == Sel) ? ATTR_HILITE : ATTR_NORMAL,
         L" %-40s ",
         Items[Index]
@@ -384,6 +812,9 @@ UiMenu (
         break;
       case SCAN_END:
         Sel = Count - 1;
+        break;
+      case SCAN_F2:
+        Redraw = UiCycleScale ();
         break;
       case SCAN_ESC:
         return -1;

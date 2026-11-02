@@ -25,6 +25,8 @@ PCI and IO writes always ask for confirmation.
 |---|---|
 | ![IO](docs/images/io-space.png) | ![MSR](docs/images/msr.png) |
 
+Display: when the firmware exposes GOP, GuiRW draws its own 8x19 text (the edk2 font) at the panel's native resolution, with an integer font scale picked automatically so the grid fills the screen with at least 100x25 cells (e.g. 1920x1080 -> 120x28 at x2, 1024x768 -> 128x40 at x1). `F2` on the main menu cycles the font scale; the title bar shows resolution, grid and scale. Only changed cells are redrawn, so cursor movement stays fast even with serial console redirection enabled. Without GOP it falls back to the firmware text console.
+
 ## Build
 
 Requires an [edk2](https://github.com/tianocore/edk2) checkout (tested with `edk2-stable202408`), GCC, NASM and uuid-dev.
