@@ -28,6 +28,9 @@
   ComView.c
   AcpiView.c
   AmlView.c
+  CmosView.c
+  SioView.c
+  EcView.c
 
 [Packages]
   MdePkg/MdePkg.dec

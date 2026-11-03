@@ -715,7 +715,7 @@ ShowTable (
       IsAml ? (Asl ? L"   [ASL source]  F7: decoded view" : L"   F7: ASL source") : L""
       );
     gDocF7Exit = IsAml;
-    gDocFooter = IsAml ? L"F7:ASL/decoded  F2:save .aml+.dsl  Left/Right:scroll  F1:help  Esc:back" : NULL;
+    gDocFooter = IsAml ? L"F7:ASL/decoded  F2:save .aml+.dsl  /:find  F3:next  F1:help  Esc:back" : NULL;
     DocView (Asl ? L"ACPI Table - ASL" : L"ACPI Table", Header, &Doc);
     gDocF7Exit = FALSE;
     gDocFooter = NULL;

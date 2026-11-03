@@ -704,7 +704,7 @@ UiShowHelp (
 INTN   gUiCurrent = UI_MOD_PCI;
 
 STATIC CONST CHAR16  *mBarItems[] = {
-  L"PCI", L"Memory", L"IO", L"MSR", L"ACPI", L"SMBIOS", L"USB", L"COM", L"Help"
+  L"PCI", L"Memory", L"IO", L"MSR", L"ACPI", L"SMBIOS", L"USB", L"COM", L"CMOS", L"SIO", L"EC", L"Help"
 };
 
 STATIC CONST CHAR16  *mHelpItems[] = { L"Keys (F1)", L"About", L"Exit" };

@@ -100,6 +100,15 @@ RunModule (
     case UI_MOD_COM:
       ComViewRun ();
       break;
+    case UI_MOD_CMOS:
+      CmosViewRun ();
+      break;
+    case UI_MOD_SIO:
+      SioViewRun ();
+      break;
+    case UI_MOD_EC:
+      EcViewRun ();
+      break;
     default:
       break;
   }

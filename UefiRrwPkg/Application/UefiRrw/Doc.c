@@ -12,6 +12,79 @@
 
 #define DOC_LINE_MAX  320
 
+STATIC CHAR16  mFind[64];
+
+/**
+  Read a line of text on the status line. FALSE on Esc.
+**/
+STATIC
+BOOLEAN
+PromptText (
+  IN     CONST CHAR16  *Prompt,
+  IN OUT CHAR16        *Buf,
+  IN     UINTN         Max
+  )
+{
+  EFI_INPUT_KEY  Key;
+  UINTN          Len;
+
+  Len = StrLen (Buf);
+  for ( ; ;) {
+    UiStatus (ATTR_EDIT, L"%s: %s_   (Enter=find, Esc=cancel)", Prompt, Buf);
+    UiReadKey (&Key);
+    if (Key.ScanCode == SCAN_ESC) {
+      return FALSE;
+    }
+
+    if (Key.UnicodeChar == CHAR_CARRIAGE_RETURN) {
+      return (BOOLEAN)(Len > 0);
+    }
+
+    if (Key.UnicodeChar == CHAR_BACKSPACE) {
+      if (Len > 0) {
+        Buf[--Len] = L'\0';
+      }
+    } else if ((Key.UnicodeChar >= 0x20) && (Key.UnicodeChar < 0x7F) && (Len + 1 < Max)) {
+      Buf[Len++] = Key.UnicodeChar;
+      Buf[Len]   = L'\0';
+    }
+  }
+}
+
+STATIC
+CHAR16
+Lower (
+  IN CHAR16  C
+  )
+{
+  return ((C >= L'A') && (C <= L'Z')) ? (CHAR16)(C + 32) : C;
+}
+
+/**
+  Case-insensitive search. Returns the column of the match or -1.
+**/
+STATIC
+INTN
+FindIn (
+  IN CONST CHAR16  *Text,
+  IN CONST CHAR16  *Pat
+  )
+{
+  UINTN  Pos;
+  UINTN  K;
+
+  for (Pos = 0; Text[Pos] != 0; Pos++) {
+    for (K = 0; (Pat[K] != 0) && (Text[Pos + K] != 0) && (Lower (Text[Pos + K]) == Lower (Pat[K])); K++) {
+    }
+
+    if (Pat[K] == 0) {
+      return (INTN)Pos;
+    }
+  }
+
+  return -1;
+}
+
 BOOLEAN       gDocF7Exit;     // DocView returns on F7 (gDocLastScan = SCAN_F7)
 UINT16        gDocLastScan;
 CONST CHAR16  *gDocFooter;    // DocView footer override, NULL = default
@@ -210,8 +283,14 @@ DocView (
     L"PgUp/PgDn     Page up / down",
     L"Home/End      First / last line",
     L"Left/Right    Scroll the text sideways to read long lines",
-    L"Enter         Show the current line in full (wrapped)"
+    L"Enter         Show the current line in full (wrapped)",
+    L"/ or Ctrl+F   Find text (case-insensitive)",
+    L"F3 or n       Find next"
   };
+  CONST CHAR16   *Msg;
+  UINTN          Step;
+  UINTN          Line;
+  INTN           Col;
   UINTN          Top;
   UINTN          Cur;
   UINTN          HScroll;
@@ -225,8 +304,9 @@ DocView (
   Top     = 0;
   Cur     = 0;
   HScroll = 0;
+  Msg     = NULL;
   gDocLastScan = SCAN_NULL;
-  UiFrame (Title, (gDocFooter != NULL) ? gDocFooter : L"Up/Down:line  Left/Right:scroll text  Enter:full line  F1:help  Esc:back");
+  UiFrame (Title, (gDocFooter != NULL) ? gDocFooter : L"Up/Down:line  Left/Right:scroll  Enter:full line  /:find  F3:next  F1:help  Esc:back");
   for ( ; ;) {
     Visible = gScreenRows - 4;
     if (Doc->Count == 0) {
@@ -255,6 +335,10 @@ DocView (
     }
 
     Len = (Doc->Count > 0) ? StrLen (Doc->Lines[Cur].Text) : 0;
+    if (Msg != NULL) {
+      UiStatus (ATTR_WARN, L"%s", Msg);
+      Msg = NULL;
+    } else
     UiStatus (
       ATTR_DIM,
       L"Line %d of %d   Col %d%s",
@@ -265,6 +349,43 @@ DocView (
       );
     UiSetHelp (Help, ARRAY_SIZE (Help));
     UiReadKey (&Key);
+    if ((Key.UnicodeChar == L'/') || (Key.UnicodeChar == 0x06) || (Key.ScanCode == SCAN_F3) || (Key.UnicodeChar == L'n')) {
+      if ((Key.UnicodeChar == L'/') || (Key.UnicodeChar == 0x06) || (mFind[0] == 0)) {
+        if (!PromptText (L"Find", mFind, ARRAY_SIZE (mFind))) {
+          continue;
+        }
+      }
+
+      Col = -1;
+      Line = Cur;
+      for (Step = 1; Step <= Doc->Count; Step++) {
+        Line = (Cur + Step) % Doc->Count;
+        Col  = FindIn (Doc->Lines[Line].Text, mFind);
+        if (Col >= 0) {
+          break;
+        }
+      }
+
+      if (Col < 0) {
+        Msg = L"Not found.";
+      } else {
+        if ((Line <= Cur) && (Step > 0)) {
+          Msg = L"Search wrapped to the top.";
+        }
+
+        Cur = Line;
+        if (((UINTN)Col < HScroll) || ((UINTN)Col + StrLen (mFind) > HScroll + gScreenCols - 2)) {
+          HScroll = ((UINTN)Col > 16) ? ((UINTN)Col - 16) & ~(UINTN)15 : 0;
+        }
+
+        if ((Cur < Top) || (Cur >= Top + Visible)) {
+          Top = (Cur > Visible / 2) ? Cur - Visible / 2 : 0;
+        }
+      }
+
+      continue;
+    }
+
     if ((Key.UnicodeChar == CHAR_CARRIAGE_RETURN) && (Doc->Count > 0)) {
       //
       // Wrap the current line over the bottom of the screen.

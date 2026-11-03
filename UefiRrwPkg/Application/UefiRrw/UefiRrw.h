@@ -16,7 +16,7 @@
 #include <Library/PrintLib.h>
 #include <Library/IoLib.h>
 
-#define UEFIRRW_VERSION  L"0.6.0"
+#define UEFIRRW_VERSION  L"0.7.0"
 
 //
 // Colors
@@ -48,10 +48,13 @@ extern UINTN  gScreenRows;
 #define UI_MOD_SMBIOS  5
 #define UI_MOD_USB     6
 #define UI_MOD_COM     7
-#define UI_MOD_HELP    8
-#define UI_MOD_ABOUT   9
-#define UI_MOD_FONT    10
-#define UI_MOD_EXIT    11
+#define UI_MOD_CMOS    8
+#define UI_MOD_SIO     9
+#define UI_MOD_EC      10
+#define UI_MOD_HELP    11
+#define UI_MOD_ABOUT   12
+#define UI_MOD_FONT    13
+#define UI_MOD_EXIT    14
 
 extern INTN  gUiJump;
 extern INTN  gUiCurrent;
@@ -364,6 +367,21 @@ ComViewRun (
 
 VOID
 AcpiViewRun (
+  VOID
+  );
+
+VOID
+CmosViewRun (
+  VOID
+  );
+
+VOID
+SioViewRun (
+  VOID
+  );
+
+VOID
+EcViewRun (
   VOID
   );
 
