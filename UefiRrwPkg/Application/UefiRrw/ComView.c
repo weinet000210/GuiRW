@@ -8,6 +8,19 @@
 **/
 
 #include "UefiRrw.h"
+
+STATIC CONST CHAR16  *mComHelp[] = {
+  L"Typing        Sends the characters (Enter sends the line ending)",
+  L"Tab           Switch typing between ASCII and raw hex bytes",
+  L"F2            Baud rate 9600 / 19200 / 38400 / 57600 / 115200, 8N1",
+  L"F3            Clear both windows",
+  L"F4            Internal loopback self-test (data and modem lines)",
+  L"F5            Hide / show sent (TX) bytes",
+  L"F6            Enter sends CR / CR+LF / LF",
+  L"PgUp/PgDn/End Scroll the history",
+  L"              Sent bytes yellow, received bytes white"
+};
+
 #include <Protocol/SerialIo.h>
 #include <Protocol/SuperIo.h>
 #include <Protocol/DevicePath.h>
@@ -577,7 +590,7 @@ Draw (
   if (Full) {
     UiFrame (
       L"COM Port Test",
-      L"Tab:ASCII/Hex  F2:Baud  F3:Clear  F4:Loopback  F5:TX echo  F6:Enter  PgUp/PgDn/End  Esc:Back"
+      L"Tab:ASCII/Hex  F2:baud  F4:loopback  F1:help  Esc:back"
       );
   }
 
@@ -943,6 +956,12 @@ Terminal (
     }
 
     if (!EFI_ERROR (gST->ConIn->ReadKeyStroke (gST->ConIn, &Key))) {
+      if (Key.ScanCode == SCAN_F1) {
+        UiSetHelp (mComHelp, ARRAY_SIZE (mComHelp));
+        UiShowHelp ();
+        continue;
+      }
+
       if (Key.ScanCode == SCAN_F10) {
         Pick = UiTopMenu ();
         if (Pick >= 0) {

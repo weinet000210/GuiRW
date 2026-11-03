@@ -203,6 +203,14 @@ DrawBits (
   UiPrintAt (7, Row + 1, ATTR_NORMAL, L"%s", Line);
 }
 
+STATIC CONST CHAR16  *mMsrHelp[] = {
+  L"Up/Down       Select an MSR (bit view below)",
+  L"A             Add any MSR by index",
+  L"W             Write a new 64-bit value (no confirmation)",
+  L"F5            Re-read all MSRs",
+  L"              An MSR that raises #GP is shown as unsupported"
+};
+
 VOID
 MsrViewRun (
   VOID
@@ -230,7 +238,7 @@ MsrViewRun (
   for ( ; ;) {
     Visible = gScreenRows - 9;
     if (Redraw) {
-      UiFrame (L"MSR (boot processor)", L"Up/Down:select  F5:re-read  A:add MSR  W:write  Esc:back");
+      UiFrame (L"MSR (boot processor)", L"A:add MSR  W:write  F5:re-read  F1:help  Esc:back");
       UiPrintAt (1, 1, ATTR_HEADER, L"CPU: %s", Brand);
       if (!mGuardInstalled) {
         UiStatus (ATTR_WARN, L"#GP guard unavailable (no CPU Arch protocol): MSR access disabled.");
@@ -269,6 +277,7 @@ MsrViewRun (
       UiFillLine (gScreenRows - 4, ATTR_NORMAL);
     }
 
+    UiSetHelp (mMsrHelp, ARRAY_SIZE (mMsrHelp));
     UiReadKey (&Key);
     switch (Key.ScanCode) {
       case SCAN_ESC:

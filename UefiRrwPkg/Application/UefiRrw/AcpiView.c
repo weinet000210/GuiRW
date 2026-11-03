@@ -471,16 +471,15 @@ DecodeDmar (
 
 STATIC
 VOID
-ShowTable (
-  IN ACPI_ENTRY  *E
+AddTableBody (
+  IN OUT TEXT_DOC  *Doc,
+  IN ACPI_ENTRY    *E
   )
 {
-  TEXT_DOC  Doc;
   CHAR16    Sig[5];
   CHAR16    Oem[7];
   CHAR16    OemTab[9];
   CHAR16    Creator[5];
-  CHAR16    Header[100];
   UINT8     *T;
   UINT32    Len;
   UINT32    Raw;
@@ -488,48 +487,62 @@ ShowTable (
   T   = E->Ptr;
   Len = E->Length;
   AsciiField (Sig, T, 4);
-  DocInit (&Doc);
-  DocAdd (&Doc, ATTR_HEADER, L"Header");
-  DocAdd (&Doc, ATTR_NORMAL, L"  Signature        %s", Sig);
-  DocAdd (&Doc, ATTR_NORMAL, L"  Address          %lX", (UINT64)(UINTN)T);
-  DocAdd (&Doc, ATTR_NORMAL, L"  Length           %d (%Xh)", Len, Len);
+  DocAdd (Doc, ATTR_HEADER, L"Header");
+  DocAdd (Doc, ATTR_NORMAL, L"  Signature        %s", Sig);
+  DocAdd (Doc, ATTR_NORMAL, L"  Address          %lX", (UINT64)(UINTN)T);
+  DocAdd (Doc, ATTR_NORMAL, L"  Length           %d (%Xh)", Len, Len);
   if (E->HasHeader) {
     AsciiField (Oem, T + 10, 6);
     AsciiField (OemTab, T + 16, 8);
     AsciiField (Creator, T + 28, 4);
-    DocAdd (&Doc, ATTR_NORMAL, L"  Revision         %d", T[8]);
-    DocAdd (&Doc, (Sum8 (T, Len) == 0) ? ATTR_NORMAL : ATTR_WARN, L"  Checksum         %02X (%s)", T[9], (Sum8 (T, Len) == 0) ? L"OK" : L"BAD");
-    DocAdd (&Doc, ATTR_NORMAL, L"  OEM ID           %s", Oem);
-    DocAdd (&Doc, ATTR_NORMAL, L"  OEM Table ID     %s", OemTab);
-    DocAdd (&Doc, ATTR_NORMAL, L"  OEM Revision     %08X", R32 (T + 24));
-    DocAdd (&Doc, ATTR_NORMAL, L"  Creator ID       %s  revision %08X", Creator, R32 (T + 32));
+    DocAdd (Doc, ATTR_NORMAL, L"  Revision         %d", T[8]);
+    DocAdd (Doc, (Sum8 (T, Len) == 0) ? ATTR_NORMAL : ATTR_WARN, L"  Checksum         %02X (%s)", T[9], (Sum8 (T, Len) == 0) ? L"OK" : L"BAD");
+    DocAdd (Doc, ATTR_NORMAL, L"  OEM ID           %s", Oem);
+    DocAdd (Doc, ATTR_NORMAL, L"  OEM Table ID     %s", OemTab);
+    DocAdd (Doc, ATTR_NORMAL, L"  OEM Revision     %08X", R32 (T + 24));
+    DocAdd (Doc, ATTR_NORMAL, L"  Creator ID       %s  revision %08X", Creator, R32 (T + 32));
   } else if (CompareMem (T, "FACS", 4) == 0) {
-    DocAdd (&Doc, ATTR_NORMAL, L"  HW signature     %08X", R32 (T + 8));
-    DocAdd (&Doc, ATTR_NORMAL, L"  Waking vector    %08X  X: %lX", R32 (T + 12), R64 (T + 24));
-    DocAdd (&Doc, ATTR_NORMAL, L"  Global lock      %08X   Flags %08X   Version %d", R32 (T + 16), R32 (T + 20), T[32]);
+    DocAdd (Doc, ATTR_NORMAL, L"  HW signature     %08X", R32 (T + 8));
+    DocAdd (Doc, ATTR_NORMAL, L"  Waking vector    %08X  X: %lX", R32 (T + 12), R64 (T + 24));
+    DocAdd (Doc, ATTR_NORMAL, L"  Global lock      %08X   Flags %08X   Version %d", R32 (T + 16), R32 (T + 20), T[32]);
   }
 
-  DocAdd (&Doc, ATTR_NORMAL, L"");
+  DocAdd (Doc, ATTR_NORMAL, L"");
   if (CompareMem (T, "FACP", 4) == 0) {
-    DecodeFadt (&Doc, T, Len);
+    DecodeFadt (Doc, T, Len);
   } else if (CompareMem (T, "APIC", 4) == 0) {
-    DecodeMadt (&Doc, T, Len);
+    DecodeMadt (Doc, T, Len);
   } else if (CompareMem (T, "MCFG", 4) == 0) {
-    DecodeMcfg (&Doc, T, Len);
+    DecodeMcfg (Doc, T, Len);
   } else if (CompareMem (T, "HPET", 4) == 0) {
-    DecodeHpet (&Doc, T, Len);
+    DecodeHpet (Doc, T, Len);
   } else if (CompareMem (T, "DMAR", 4) == 0) {
-    DecodeDmar (&Doc, T, Len);
+    DecodeDmar (Doc, T, Len);
   } else if ((CompareMem (T, "DSDT", 4) == 0) || (CompareMem (T, "SSDT", 4) == 0)) {
-    DocAdd (&Doc, ATTR_DIM, L"AML definition block: raw bytes below (disassemble with iasl -d on a saved copy).");
+    DocAdd (Doc, ATTR_DIM, L"AML definition block: raw bytes below (disassemble with iasl -d on a saved copy).");
   }
 
-  DocAdd (&Doc, ATTR_NORMAL, L"");
+  DocAdd (Doc, ATTR_NORMAL, L"");
   Raw = (Len > RAW_MAX) ? RAW_MAX : Len;
-  DocAdd (&Doc, ATTR_HEADER, L"Raw data%s", (Raw < Len) ? L" (first 512 KB)" : L"");
-  DocAddHex (&Doc, T, Raw, 0);
+  DocAdd (Doc, ATTR_HEADER, L"Raw data%s", (Raw < Len) ? L" (first 512 KB)" : L"");
+  DocAddHex (Doc, T, Raw, 0);
 
-  UnicodeSPrint (Header, sizeof (Header), L"%s  at %lX  length %Xh", Sig, (UINT64)(UINTN)T, Len);
+}
+
+STATIC
+VOID
+ShowTable (
+  IN ACPI_ENTRY  *E
+  )
+{
+  TEXT_DOC  Doc;
+  CHAR16    Sig[5];
+  CHAR16    Header[100];
+
+  AsciiField (Sig, E->Ptr, 4);
+  DocInit (&Doc);
+  AddTableBody (&Doc, E);
+  UnicodeSPrint (Header, sizeof (Header), L"%s  at %lX  length %Xh", Sig, (UINT64)(UINTN)E->Ptr, E->Length);
   DocView (L"ACPI Table", Header, &Doc);
   DocFree (&Doc);
 }
@@ -594,6 +607,46 @@ BuildList (
   }
 }
 
+STATIC CONST CHAR16  *mAcpiHelp[] = {
+  L"Up/Down       Select a table",
+  L"Enter         Open the table: header, decoded fields, raw bytes",
+  L"F3            All tables on one page (summary, then every table)",
+  L"F5            Rescan"
+};
+
+/**
+  Every table on one page: the summary list, then each table's decode and
+  raw bytes, one after another.
+**/
+STATIC
+VOID
+ShowAll (
+  VOID
+  )
+{
+  TEXT_DOC  Doc;
+  TEXT_DOC  List;
+  UINTN     Index;
+  UINTN     Line;
+
+  BuildList (&List);
+  DocInit (&Doc);
+  DocAdd (&Doc, ATTR_HEADER, L" Sig   OEM     Table ID  Rev      Length       Address  Checksum");
+  for (Line = 0; Line < List.Count; Line++) {
+    DocAdd (&Doc, List.Lines[Line].Attr, L"%s", List.Lines[Line].Text);
+  }
+
+  DocFree (&List);
+  for (Index = 0; Index < mTableCount; Index++) {
+    DocAdd (&Doc, ATTR_NORMAL, L"");
+    DocAdd (&Doc, ATTR_HILITE, L" ==== %c%c%c%c ==== ", mTables[Index].Ptr[0], mTables[Index].Ptr[1], mTables[Index].Ptr[2], mTables[Index].Ptr[3]);
+    AddTableBody (&Doc, &mTables[Index]);
+  }
+
+  DocView (L"ACPI - All Tables", NULL, &Doc);
+  DocFree (&Doc);
+}
+
 VOID
 AcpiViewRun (
   VOID
@@ -609,7 +662,8 @@ AcpiViewRun (
   for ( ; ;) {
     BuildList (&Doc);
     UnicodeSPrint (Header, sizeof (Header), L" Sig   OEM     Table ID  Rev      Length       Address  Checksum   (%d tables)", mTableCount);
-    Pick = DocSelect (L"ACPI Tables", L"Up/Down/PgUp/PgDn: select   Enter: open table   F5: rescan   Esc: back", Header, &Doc, &Sel);
+    UiSetHelp (mAcpiHelp, ARRAY_SIZE (mAcpiHelp));
+    Pick = DocSelect (L"ACPI Tables", L"Enter:open  F3:all tables  F5:rescan  F1:help  Esc:back", Header, &Doc, &Sel);
     DocFree (&Doc);
     if (Pick == -1) {
       return;
@@ -617,6 +671,11 @@ AcpiViewRun (
 
     if (Pick == -2) {
       ScanAcpi ();
+      continue;
+    }
+
+    if (Pick == -6) {
+      ShowAll ();
       continue;
     }
 

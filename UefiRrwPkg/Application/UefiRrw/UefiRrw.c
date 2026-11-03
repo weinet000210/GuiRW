@@ -148,11 +148,6 @@ UefiMain (
       continue;
     }
 
-    if (Next == UI_MOD_FONT) {
-      UiCycleScale ();
-      continue;
-    }
-
     Mod = Next;
   }
 

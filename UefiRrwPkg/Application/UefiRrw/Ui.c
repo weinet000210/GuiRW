@@ -595,20 +595,119 @@ UiPrintAt (
 }
 
 /**
-  Draw the title bar (row 0) and help bar (last row), clear the body.
+  Print at most N characters of Str.
 **/
+VOID
+UiPrintN (
+  IN UINTN         Col,
+  IN UINTN         Row,
+  IN UINTN         Attr,
+  IN CONST CHAR16  *Str,
+  IN UINTN         N
+  )
+{
+  CHAR16  Buf[512];
+  UINTN   Len;
+
+  Len = MIN (MIN (StrLen (Str), N), ARRAY_SIZE (Buf) - 1);
+  CopyMem (Buf, Str, Len * sizeof (CHAR16));
+  Buf[Len] = L'\0';
+  UiPut (Col, Row, Attr, Buf);
+}
+
 //
 // ---- Menu bar (F10) ---------------------------------------------------------------
 //
 
 INTN   gUiJump    = -1;
+
+STATIC CONST CHAR16  **mHelpLines;
+STATIC UINTN         mHelpCount;
+
+/**
+  Set the key list that F1 shows for the current screen.
+**/
+VOID
+UiSetHelp (
+  IN CONST CHAR16  **Lines,
+  IN UINTN         Count
+  )
+{
+  mHelpLines = Lines;
+  mHelpCount = Count;
+}
+
+/**
+  F1: a box listing the current screen's keys over the screen, restored on
+  any key.
+**/
+VOID
+UiShowHelp (
+  VOID
+  )
+{
+  STATIC CONST CHAR16  *Global[] = {
+    L"F1          This help",
+    L"F10         Menu bar (PCI Memory IO MSR ACPI SMBIOS USB COM Help)",
+    L"Esc         Back / close"
+  };
+  UI_CELL        *Saved;
+  UINTN          Size;
+  UINTN          Width;
+  UINTN          Height;
+  UINTN          Left;
+  UINTN          Top;
+  UINTN          Index;
+  UINTN          Row;
+  EFI_INPUT_KEY  Key;
+
+  Size  = gScreenCols * gScreenRows * sizeof (UI_CELL);
+  Saved = AllocateCopyPool (Size, mCells);
+  Width = 0;
+  for (Index = 0; Index < mHelpCount; Index++) {
+    Width = MAX (Width, StrLen (mHelpLines[Index]));
+  }
+
+  for (Index = 0; Index < ARRAY_SIZE (Global); Index++) {
+    Width = MAX (Width, StrLen (Global[Index]));
+  }
+
+  Width  = MIN (Width + 4, gScreenCols - 2);
+  Height = MIN (mHelpCount + ARRAY_SIZE (Global) + 4, gScreenRows - 2);
+  Left   = (gScreenCols - Width) / 2;
+  Top    = (gScreenRows - Height) / 2;
+  for (Row = 0; Row < Height; Row++) {
+    UiPrintAt (Left, Top + Row, ATTR_TITLE, L"%-*s", Width, L"");
+  }
+
+  UiPrintAt (Left + 2, Top, ATTR_TITLE, L"Keys");
+  Row = Top + 1;
+  for (Index = 0; (Index < mHelpCount) && (Row < Top + Height - 1); Index++, Row++) {
+    UiPrintN (Left + 2, Row, ATTR_TITLE, mHelpLines[Index], Width - 4);
+  }
+
+  Row++;
+  for (Index = 0; (Index < ARRAY_SIZE (Global)) && (Row < Top + Height - 1); Index++, Row++) {
+    UiPrintN (Left + 2, Row, ATTR_TITLE, Global[Index], Width - 4);
+  }
+
+  UiFlush ();
+  gBS->WaitForEvent (1, &gST->ConIn->WaitForKey, &Index);
+  gST->ConIn->ReadKeyStroke (gST->ConIn, &Key);
+  if (Saved != NULL) {
+    CopyMem (mCells, Saved, Size);
+    FreePool (Saved);
+  }
+
+  UiFlush ();
+}
 INTN   gUiCurrent = UI_MOD_PCI;
 
 STATIC CONST CHAR16  *mBarItems[] = {
   L"PCI", L"Memory", L"IO", L"MSR", L"ACPI", L"SMBIOS", L"USB", L"COM", L"Help"
 };
 
-STATIC CONST CHAR16  *mHelpItems[] = { L"About", L"Font Size", L"Exit" };
+STATIC CONST CHAR16  *mHelpItems[] = { L"Keys (F1)", L"About", L"Exit" };
 
 STATIC
 UINTN
@@ -729,7 +828,17 @@ UiTopMenu (
         Open = TRUE;
         Sub  = 0;
       } else {
-        Result = UI_MOD_ABOUT + Sub;
+        if (Sub == 0) {
+          if (Saved != NULL) {
+            CopyMem (mCells, Saved, Size);
+          }
+
+          UiShowHelp ();
+          Open = FALSE;
+          continue;
+        }
+
+        Result = (Sub == 1) ? UI_MOD_ABOUT : UI_MOD_EXIT;
         break;
       }
     }
@@ -766,6 +875,8 @@ UiFrame (
   UiPrintAt (1, gScreenRows - 1, ATTR_TITLE, L"%s", Help);
   if (StrLen (Help) + 14 < gScreenCols) {
     UiPrintAt (gScreenCols - 11, gScreenRows - 1, ATTR_TITLE, L"F10: Menu");
+  } else if (StrLen (Help) + 3 < gScreenCols) {
+    UiPrintAt (gScreenCols - 2, gScreenRows - 1, ATTR_TITLE, L" ");
   }
 }
 
@@ -833,6 +944,11 @@ UiReadKeyTimeout (
     }
 
     if (EFI_ERROR (gST->ConIn->ReadKeyStroke (gST->ConIn, Key))) {
+      continue;
+    }
+
+    if (Key->ScanCode == SCAN_F1) {
+      UiShowHelp ();
       continue;
     }
 

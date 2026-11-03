@@ -1312,6 +1312,12 @@ ShowStruct (
   DocFree (&Doc);
 }
 
+STATIC CONST CHAR16  *mSmbiosHelp[] = {
+  L"Up/Down       Select a structure",
+  L"Enter         Decoded fields, strings and raw bytes",
+  L"F5            Reload the tables"
+};
+
 VOID
 SmbiosViewRun (
   VOID
@@ -1351,9 +1357,10 @@ SmbiosViewRun (
         );
     }
 
+    UiSetHelp (mSmbiosHelp, ARRAY_SIZE (mSmbiosHelp));
     Pick = DocSelect (
              L"SMBIOS",
-             L"Up/Down/PgUp/PgDn: select   Enter: open   F5: reload   Esc: back",
+             L"Enter:open  F5:reload  F1:help  Esc:back",
              mEntryInfo,
              &Doc,
              &Sel

@@ -16,7 +16,7 @@
 #include <Library/PrintLib.h>
 #include <Library/IoLib.h>
 
-#define UEFIRRW_VERSION  L"0.5.0"
+#define UEFIRRW_VERSION  L"0.5.1"
 
 //
 // Colors
@@ -64,6 +64,26 @@ UiDrawMenuBar (
 INTN
 UiTopMenu (
   VOID
+  );
+
+VOID
+UiSetHelp (
+  IN CONST CHAR16  **Lines,
+  IN UINTN         Count
+  );
+
+VOID
+UiShowHelp (
+  VOID
+  );
+
+VOID
+UiPrintN (
+  IN UINTN         Col,
+  IN UINTN         Row,
+  IN UINTN         Attr,
+  IN CONST CHAR16  *Str,
+  IN UINTN         N
   );
 
 BOOLEAN
