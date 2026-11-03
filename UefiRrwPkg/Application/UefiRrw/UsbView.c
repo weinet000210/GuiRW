@@ -10,7 +10,7 @@
   SPDX-License-Identifier: BSD-2-Clause-Patent
 **/
 
-#include "GuiRw.h"
+#include "UefiRrw.h"
 #include <Protocol/UsbIo.h>
 #include <Protocol/Usb2HostController.h>
 #include <Protocol/PciIo.h>

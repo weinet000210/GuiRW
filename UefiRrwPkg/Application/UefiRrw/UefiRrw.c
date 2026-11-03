@@ -1,11 +1,11 @@
 /** @file
-  GuiRW - a text-mode, RW-Everything style hardware read/write utility
+  uefirrw - a text-mode, RW-Everything style hardware read/write utility
   for the UEFI Shell.
 
   SPDX-License-Identifier: BSD-2-Clause-Patent
 **/
 
-#include "GuiRw.h"
+#include "UefiRrw.h"
 
 STATIC CONST CHAR16  *mMainItems[] = {
   L"1. PCI Devices / Config Space",
@@ -14,6 +14,7 @@ STATIC CONST CHAR16  *mMainItems[] = {
   L"4. MSR",
   L"5. SMBIOS",
   L"6. USB Devices",
+  L"7. COM Port Test",
   L"Q. Quit",
 };
 
@@ -36,7 +37,7 @@ UefiMain (
   Last = 0;
   for ( ; ;) {
     Choice = UiMenu (L"Main Menu", mMainItems, ARRAY_SIZE (mMainItems), Last);
-    if ((Choice < 0) || (Choice == 6)) {
+    if ((Choice < 0) || (Choice == 7)) {
       break;
     }
 
@@ -59,6 +60,9 @@ UefiMain (
         break;
       case 5:
         UsbViewRun ();
+        break;
+      case 6:
+        ComViewRun ();
         break;
       default:
         break;

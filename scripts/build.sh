@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build GuiRw.efi (X64) with EDK2 + GCC.
+# Build uefirrw.efi (X64) with EDK2 + GCC.
 #   EDK2_DIR   path to an edk2 checkout (default: ../edk2 next to this repo)
 #   TARGET     DEBUG | RELEASE (default RELEASE)
 # On a non-x86 host, install x86_64-linux-gnu-gcc; the prefix is set automatically.
@@ -19,8 +19,8 @@ cd "$EDK2_DIR"
 set +u
 source edksetup.sh BaseTools >/dev/null
 set -u
-build -p GuiRwPkg/GuiRwPkg.dsc -a X64 -t GCC5 -b "$TARGET" -n "$(nproc)"
-OUT="$WORKSPACE/Build/GuiRwPkg/${TARGET}_GCC5/X64/GuiRw.efi"
+build -p UefiRrwPkg/UefiRrwPkg.dsc -a X64 -t GCC5 -b "$TARGET" -n "$(nproc)"
+OUT="$WORKSPACE/Build/UefiRrwPkg/${TARGET}_GCC5/X64/uefirrw.efi"
 mkdir -p "$REPO/dist"
-cp "$OUT" "$REPO/dist/GuiRw.efi"
-echo "Built: $REPO/dist/GuiRw.efi"
+cp "$OUT" "$REPO/dist/uefirrw.efi"
+echo "Built: $REPO/dist/uefirrw.efi"

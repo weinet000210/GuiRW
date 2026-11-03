@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          path: GuiRW
+          path: uefirrw
 
       - name: Checkout edk2
         uses: actions/checkout@v4
@@ -33,10 +33,10 @@ jobs:
       - name: Build BaseTools
         run: make -C edk2/BaseTools -j"$(nproc)"
 
-      - name: Build GuiRw.efi
-        run: EDK2_DIR="$GITHUB_WORKSPACE/edk2" GuiRW/scripts/build.sh
+      - name: Build uefirrw.efi
+        run: EDK2_DIR="$GITHUB_WORKSPACE/edk2" uefirrw/scripts/build.sh
 
       - uses: actions/upload-artifact@v4
         with:
-          name: GuiRw-X64
-          path: GuiRW/dist/GuiRw.efi
+          name: uefirrw-X64
+          path: uefirrw/dist/uefirrw.efi

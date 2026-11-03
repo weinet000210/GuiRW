@@ -1,15 +1,15 @@
 ## @file
-#  GuiRwPkg build description.
+#  UefiRrwPkg build description.
 #
 #  SPDX-License-Identifier: BSD-2-Clause-Patent
 ##
 
 [Defines]
-  PLATFORM_NAME                  = GuiRwPkg
+  PLATFORM_NAME                  = UefiRrwPkg
   PLATFORM_GUID                  = 0E5B7D2C-9A41-4F63-8C1E-5D2A7B9F3C10
   PLATFORM_VERSION               = 0.1
   DSC_SPECIFICATION              = 0x00010005
-  OUTPUT_DIRECTORY               = Build/GuiRwPkg
+  OUTPUT_DIRECTORY               = Build/UefiRrwPkg
   SUPPORTED_ARCHITECTURES        = X64
   BUILD_TARGETS                  = DEBUG|RELEASE|NOOPT
   SKUID_IDENTIFIER               = DEFAULT
@@ -30,4 +30,4 @@
   RegisterFilterLib|MdePkg/Library/RegisterFilterLibNull/RegisterFilterLibNull.inf
 
 [Components]
-  GuiRwPkg/Application/GuiRw/GuiRw.inf
+  UefiRrwPkg/Application/UefiRrw/UefiRrw.inf

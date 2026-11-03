@@ -5,7 +5,7 @@
   UiFlush(), called before every key read, compares it with what is already
   on screen and sends only the changed spans:
 
-  - GOP backend (preferred): GuiRW draws glyphs itself with the edk2 8x19
+  - GOP backend (preferred): uefirrw draws glyphs itself with the edk2 8x19
     font, integer-scaled so the grid fills the panel at its native resolution
     (no dependence on how the firmware console maps text modes, and nothing
     is mirrored to a serial redirection console).
@@ -15,7 +15,7 @@
   SPDX-License-Identifier: BSD-2-Clause-Patent
 **/
 
-#include "GuiRw.h"
+#include "UefiRrw.h"
 #include <Protocol/GraphicsOutput.h>
 #include <Uefi/UefiInternalFormRepresentation.h>
 
@@ -27,8 +27,8 @@
 #define MIN_ROWS     25
 #define ATTR_UNDRAWN 0xFF
 
-extern EFI_NARROW_GLYPH  gGuiRwGlyphs[];
-extern UINTN             gGuiRwGlyphCount;
+extern EFI_NARROW_GLYPH  gUefiRrwGlyphs[];
+extern UINTN             gUefiRrwGlyphCount;
 
 typedef struct {
   CHAR16    Ch;
@@ -82,9 +82,9 @@ BuildGlyphMap (
 {
   UINTN  Index;
 
-  for (Index = 0; Index < gGuiRwGlyphCount; Index++) {
-    if ((gGuiRwGlyphs[Index].UnicodeWeight >= 0x20) && (gGuiRwGlyphs[Index].UnicodeWeight < 0x7F)) {
-      mGlyph[gGuiRwGlyphs[Index].UnicodeWeight] = gGuiRwGlyphs[Index].GlyphCol1;
+  for (Index = 0; Index < gUefiRrwGlyphCount; Index++) {
+    if ((gUefiRrwGlyphs[Index].UnicodeWeight >= 0x20) && (gUefiRrwGlyphs[Index].UnicodeWeight < 0x7F)) {
+      mGlyph[gUefiRrwGlyphs[Index].UnicodeWeight] = gUefiRrwGlyphs[Index].GlyphCol1;
     }
   }
 }
@@ -553,7 +553,6 @@ UiFillLine (
   }
 }
 
-STATIC
 VOID
 UiPut (
   IN UINTN         Col,
@@ -607,7 +606,7 @@ UiFrame (
   UINTN  Row;
 
   UiFillLine (0, ATTR_TITLE);
-  UiPrintAt (1, 0, ATTR_TITLE, L"GuiRW %s  |  %s", GUIRW_VERSION, Title);
+  UiPrintAt (1, 0, ATTR_TITLE, L"uefirrw %s  |  %s", UEFIRRW_VERSION, Title);
   for (Row = 1; Row < gScreenRows - 1; Row++) {
     UiFillLine (Row, ATTR_NORMAL);
   }
@@ -653,7 +652,6 @@ UiReadKey (
   }
 }
 
-STATIC
 INTN
 HexDigitValue (
   IN CHAR16  Ch

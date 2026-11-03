@@ -4,7 +4,7 @@
   SPDX-License-Identifier: BSD-2-Clause-Patent
 **/
 
-#include "GuiRw.h"
+#include "UefiRrw.h"
 
 STATIC
 EFI_STATUS

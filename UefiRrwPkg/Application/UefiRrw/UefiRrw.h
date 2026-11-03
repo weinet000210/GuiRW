@@ -1,11 +1,11 @@
 /** @file
-  GuiRW shared declarations.
+  uefirrw shared declarations.
 
   SPDX-License-Identifier: BSD-2-Clause-Patent
 **/
 
-#ifndef GUIRW_H_
-#define GUIRW_H_
+#ifndef UEFIRRW_H_
+#define UEFIRRW_H_
 
 #include <Uefi.h>
 #include <Library/UefiLib.h>
@@ -16,7 +16,7 @@
 #include <Library/PrintLib.h>
 #include <Library/IoLib.h>
 
-#define GUIRW_VERSION  L"0.3.0"
+#define UEFIRRW_VERSION  L"0.4.0"
 
 //
 // Colors
@@ -79,6 +79,19 @@ VOID
 UiFillLine (
   IN UINTN  Row,
   IN UINTN  Attr
+  );
+
+VOID
+UiPut (
+  IN UINTN         Col,
+  IN UINTN         Row,
+  IN UINTN         Attr,
+  IN CONST CHAR16  *Text
+  );
+
+INTN
+HexDigitValue (
+  IN CHAR16  Ch
   );
 
 VOID
@@ -254,6 +267,11 @@ SmbiosViewRun (
 
 VOID
 UsbViewRun (
+  VOID
+  );
+
+VOID
+ComViewRun (
   VOID
   );
 

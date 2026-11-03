@@ -10,7 +10,7 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
 #include <Uefi.h>
 #include <Uefi/UefiInternalFormRepresentation.h>
 
-EFI_NARROW_GLYPH  gGuiRwGlyphs[] = {
+EFI_NARROW_GLYPH  gUefiRrwGlyphs[] = {
   //
   // Unicode glyphs from 0x20 to 0x7e are the same as ASCII characters 0x20 to 0x7e
   //
@@ -508,4 +508,4 @@ EFI_NARROW_GLYPH  gGuiRwGlyphs[] = {
   }                                                                                                                 // EOL
 };
 
-UINTN  gGuiRwGlyphCount = sizeof (gGuiRwGlyphs) / sizeof (gGuiRwGlyphs[0]);
+UINTN  gUefiRrwGlyphCount = sizeof (gUefiRrwGlyphs) / sizeof (gUefiRrwGlyphs[0]);

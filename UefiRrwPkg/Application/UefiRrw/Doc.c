@@ -8,7 +8,7 @@
   SPDX-License-Identifier: BSD-2-Clause-Patent
 **/
 
-#include "GuiRw.h"
+#include "UefiRrw.h"
 
 #define DOC_LINE_MAX  320
 
@@ -276,6 +276,7 @@ NextSelectable (
   @retval >= 0  tag of the line picked with Enter
   @retval -1    Esc
   @retval -2    F5 (caller should rebuild the document)
+  @retval -3    F6 (caller-defined, e.g. switch view)
 **/
 INTN
 DocSelect (
@@ -349,6 +350,10 @@ DocSelect (
         return -2;
       }
 
+      if (Key.ScanCode == SCAN_F6) {
+        return -3;
+      }
+
       continue;
     }
 
@@ -401,6 +406,9 @@ DocSelect (
       case SCAN_F5:
         *Sel = (UINTN)Cur;
         return -2;
+      case SCAN_F6:
+        *Sel = (UINTN)Cur;
+        return -3;
       case SCAN_ESC:
         *Sel = (UINTN)Cur;
         return -1;

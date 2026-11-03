@@ -9,7 +9,7 @@
   SPDX-License-Identifier: BSD-2-Clause-Patent
 **/
 
-#include "GuiRw.h"
+#include "UefiRrw.h"
 #include <Protocol/Cpu.h>
 
 #define MAX_MSR_ENTRIES  48

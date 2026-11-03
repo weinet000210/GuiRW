@@ -5,7 +5,7 @@
   SPDX-License-Identifier: BSD-2-Clause-Patent
 **/
 
-#include "GuiRw.h"
+#include "UefiRrw.h"
 #include <Protocol/PciRootBridgeIo.h>
 #include <IndustryStandard/Acpi.h>
 #include <IndustryStandard/Pci.h>
@@ -24,7 +24,27 @@ typedef struct {
   UINT8                              SubClass;
   UINT8                              ProgIf;
   UINT8                              HeaderType;
+  UINT8                              SecBus;       // bridges only
+  UINT8                              SubBus;
+  UINT8                              PcieType;     // 0xFF: no PCIe capability
+  UINT8                              LinkSpeed;    // LnkSta, 0 = none
+  UINT8                              LinkWidth;
+  UINT8                              MaxSpeed;     // LnkCap
+  UINT8                              MaxWidth;
+  UINTN                              RootIndex;
 } PCI_DEV_ENTRY;
+
+typedef struct {
+  EFI_PCI_ROOT_BRIDGE_IO_PROTOCOL    *Rb;
+  UINT32                             Segment;
+  UINTN                              BusMin;
+  UINTN                              BusMax;
+} PCI_ROOT_ENTRY;
+
+#define MAX_PCI_ROOTS  32
+
+STATIC PCI_ROOT_ENTRY  mRoots[MAX_PCI_ROOTS];
+STATIC UINTN           mRootCount;
 
 STATIC PCI_DEV_ENTRY  *mDevs;
 STATIC UINTN          mDevCount;
@@ -158,6 +178,64 @@ BusRange (
   }
 }
 
+/**
+  Bridge bus numbers and PCI Express port type / link state.
+**/
+STATIC
+VOID
+ProbeExtra (
+  IN OUT PCI_DEV_ENTRY  *E
+  )
+{
+  UINT64  Val;
+  UINT8   Ptr;
+  UINTN   Guard;
+  UINT16  Lnk;
+
+  E->PcieType  = 0xFF;
+  E->SecBus    = 0;
+  E->SubBus    = 0;
+  E->LinkSpeed = 0;
+  E->LinkWidth = 0;
+  E->MaxSpeed  = 0;
+  E->MaxWidth  = 0;
+  if (((E->HeaderType & 0x7F) == 1) || ((E->HeaderType & 0x7F) == 2)) {
+    CfgRead (E->RootBridge, E->Bus, E->Dev, E->Func, 0x19, 1, &Val);
+    E->SecBus = (UINT8)Val;
+    CfgRead (E->RootBridge, E->Bus, E->Dev, E->Func, 0x1A, 1, &Val);
+    E->SubBus = (UINT8)Val;
+  }
+
+  CfgRead (E->RootBridge, E->Bus, E->Dev, E->Func, PCI_PRIMARY_STATUS_OFFSET, 2, &Val);
+  if ((Val & EFI_PCI_STATUS_CAPABILITY) == 0) {
+    return;
+  }
+
+  CfgRead (E->RootBridge, E->Bus, E->Dev, E->Func, ((E->HeaderType & 0x7F) == 2) ? 0x14 : PCI_CAPBILITY_POINTER_OFFSET, 1, &Val);
+  Ptr = (UINT8)Val & 0xFC;
+  for (Guard = 0; (Ptr >= 0x40) && (Guard < 48); Guard++) {
+    CfgRead (E->RootBridge, E->Bus, E->Dev, E->Func, Ptr, 2, &Val);
+    if ((UINT8)Val == EFI_PCI_CAPABILITY_ID_PCIEXP) {
+      CfgRead (E->RootBridge, E->Bus, E->Dev, E->Func, Ptr + 2, 2, &Val);
+      E->PcieType = (UINT8)((Val >> 4) & 0x0F);
+      if ((E->PcieType == 9) || (E->PcieType == 0x0A)) {
+        return;     // integrated endpoint / event collector: no link
+      }
+
+      CfgRead (E->RootBridge, E->Bus, E->Dev, E->Func, Ptr + 0x0C, 2, &Val);
+      E->MaxSpeed = (UINT8)(Val & 0x0F);
+      E->MaxWidth = (UINT8)((Val >> 4) & 0x3F);
+      CfgRead (E->RootBridge, E->Bus, E->Dev, E->Func, Ptr + 0x12, 2, &Val);
+      Lnk          = (UINT16)Val;
+      E->LinkSpeed = (UINT8)(Lnk & 0x0F);
+      E->LinkWidth = (UINT8)((Lnk >> 4) & 0x3F);
+      return;
+    }
+
+    Ptr = (UINT8)(Val >> 8) & 0xFC;
+  }
+}
+
 STATIC
 VOID
 ScanPci (
@@ -179,7 +257,8 @@ ScanPci (
   UINT64                           Header;
   PCI_DEV_ENTRY                    *E;
 
-  mDevCount = 0;
+  mDevCount  = 0;
+  mRootCount = 0;
   if (mDevs == NULL) {
     mDevs = AllocateZeroPool (sizeof (PCI_DEV_ENTRY) * MAX_PCI_DEVICES);
     if (mDevs == NULL) {
@@ -198,6 +277,14 @@ ScanPci (
     }
 
     BusRange (Rb, &BusMin, &BusMax);
+    if (mRootCount < MAX_PCI_ROOTS) {
+      mRoots[mRootCount].Rb      = Rb;
+      mRoots[mRootCount].Segment = Rb->SegmentNumber;
+      mRoots[mRootCount].BusMin  = BusMin;
+      mRoots[mRootCount].BusMax  = BusMax;
+      mRootCount++;
+    }
+
     for (Bus = BusMin; Bus <= BusMax; Bus++) {
       for (Dev = 0; Dev <= PCI_MAX_DEVICE; Dev++) {
         for (Func = 0; Func <= PCI_MAX_FUNC; Func++) {
@@ -229,6 +316,8 @@ ScanPci (
             E->SubClass   = (UINT8)RShiftU64 (ClassReg, 16);
             E->BaseClass  = (UINT8)RShiftU64 (ClassReg, 24);
             E->HeaderType = (UINT8)Header;
+            E->RootIndex  = mRootCount - 1;
+            ProbeExtra (E);
           }
 
           if ((Func == 0) && ((Header & HEADER_TYPE_MULTI_FUNCTION) == 0)) {
@@ -325,6 +414,181 @@ OpenDevice (
   HexEditRun (&Space);
 }
 
+STATIC CONST CHAR16  *mPcieTypes[] = {
+  L"Endpoint", L"Legacy Endpoint", NULL, NULL, L"Root Port", L"Switch Upstream",
+  L"Switch Downstream", L"PCIe-to-PCI Bridge", L"PCI-to-PCIe Bridge",
+  L"RC Integrated Endpoint", L"RC Event Collector",
+};
+
+STATIC
+BOOLEAN
+IsBridge (
+  IN PCI_DEV_ENTRY  *E
+  )
+{
+  return (BOOLEAN)((((E->HeaderType & 0x7F) == 1) || ((E->HeaderType & 0x7F) == 2)) && (E->SecBus > E->Bus));
+}
+
+/**
+  TRUE when some bridge under the same root bridge forwards to Bus.
+**/
+STATIC
+BOOLEAN
+BusIsSecondary (
+  IN UINTN  Root,
+  IN UINT8  Bus
+  )
+{
+  UINTN  Index;
+
+  for (Index = 0; Index < mDevCount; Index++) {
+    if ((mDevs[Index].RootIndex == Root) && IsBridge (&mDevs[Index]) && (mDevs[Index].SecBus == Bus)) {
+      return TRUE;
+    }
+  }
+
+  return FALSE;
+}
+
+STATIC
+VOID
+AddTreeNode (
+  IN TEXT_DOC  *Doc,
+  IN UINTN     Index,
+  IN UINTN     Depth
+  )
+{
+  PCI_DEV_ENTRY  *E;
+  CHAR16         Link[48];
+  CHAR16         Range[24];
+  CONST CHAR16   *Type;
+  UINTN          Child;
+
+  E       = &mDevs[Index];
+  Link[0] = L'\0';
+  if ((E->PcieType != 0xFF) && (E->MaxWidth != 0)) {
+    if (E->LinkWidth == 0) {
+      UnicodeSPrint (Link, sizeof (Link), L"  link down (max Gen%d x%d)", E->MaxSpeed, E->MaxWidth);
+    } else {
+      UnicodeSPrint (Link, sizeof (Link), L"  Gen%d x%d (max Gen%d x%d)", E->LinkSpeed, E->LinkWidth, E->MaxSpeed, E->MaxWidth);
+    }
+  }
+
+  Range[0] = L'\0';
+  if (IsBridge (E)) {
+    UnicodeSPrint (Range, sizeof (Range), L"  Bus %02X-%02X", E->SecBus, E->SubBus);
+  }
+
+  Type = NULL;
+  if ((E->PcieType != 0xFF) && (E->PcieType < ARRAY_SIZE (mPcieTypes))) {
+    Type = mPcieTypes[E->PcieType];
+  }
+
+  DocAddItem (
+    Doc,
+    (INTN)Index,
+    L"%*s%s %02X:%02X.%X  %04X:%04X  %s%s%s%s%s%s",
+    2 + Depth * 4,
+    L"",
+    IsBridge (E) ? L"[-]" : L" - ",
+    E->Bus,
+    E->Dev,
+    E->Func,
+    E->VendorId,
+    E->DeviceId,
+    ClassName (E->BaseClass, E->SubClass),
+    (Type != NULL) ? L"  [" : L"",
+    (Type != NULL) ? Type : L"",
+    (Type != NULL) ? L"]" : L"",
+    Range,
+    Link
+    );
+
+  if (!IsBridge (E) || (Depth >= 16)) {
+    return;
+  }
+
+  for (Child = 0; Child < mDevCount; Child++) {
+    if ((Child != Index) && (mDevs[Child].RootIndex == E->RootIndex) && (mDevs[Child].Bus == E->SecBus)) {
+      AddTreeNode (Doc, Child, Depth + 1);
+    }
+  }
+}
+
+STATIC
+VOID
+BuildPciTree (
+  OUT TEXT_DOC  *Doc
+  )
+{
+  UINTN  Root;
+  UINTN  Index;
+
+  DocInit (Doc);
+  for (Root = 0; Root < mRootCount; Root++) {
+    DocAdd (
+      Doc,
+      ATTR_HEADER,
+      L" PCI Root Bridge  Segment %04X  Bus %02X-%02X",
+      mRoots[Root].Segment,
+      mRoots[Root].BusMin,
+      mRoots[Root].BusMax
+      );
+    for (Index = 0; Index < mDevCount; Index++) {
+      if ((mDevs[Index].RootIndex == Root) && !BusIsSecondary (Root, mDevs[Index].Bus)) {
+        AddTreeNode (Doc, Index, 0);
+      }
+    }
+
+    DocAdd (Doc, ATTR_NORMAL, L"");
+  }
+}
+
+/**
+  @retval TRUE   switch back to the list (F6)
+  @retval FALSE  leave the PCI screen (Esc)
+**/
+STATIC
+BOOLEAN
+PciTreeRun (
+  VOID
+  )
+{
+  TEXT_DOC  Doc;
+  UINTN     Sel;
+  INTN      Pick;
+  CHAR16    Header[64];
+
+  Sel = 0;
+  for ( ; ;) {
+    BuildPciTree (&Doc);
+    UnicodeSPrint (Header, sizeof (Header), L"%d device(s), %d root bridge(s)", mDevCount, mRootCount);
+    Pick = DocSelect (
+             L"PCI Tree",
+             L"Up/Down/PgUp/PgDn: select   Enter: config space   F5: rescan   F6: list view   Esc: back",
+             Header,
+             &Doc,
+             &Sel
+             );
+    DocFree (&Doc);
+    if (Pick == -1) {
+      return FALSE;
+    }
+
+    if (Pick == -3) {
+      return TRUE;
+    }
+
+    if (Pick == -2) {
+      ScanPci ();
+      Sel = 0;
+      continue;
+    }
+
+    OpenDevice (&mDevs[Pick]);
+  }
+}
+
 VOID
 PciViewRun (
   VOID
@@ -347,7 +611,7 @@ PciViewRun (
   for ( ; ;) {
     Visible = gScreenRows - 6;
     if (Redraw) {
-      UiFrame (L"PCI Devices", L"Up/Down/PgUp/PgDn: select   Enter: config space   F5: rescan   Esc: back");
+      UiFrame (L"PCI Devices", L"Up/Down/PgUp/PgDn: select   Enter: config space   F5: rescan   F6: tree view   Esc: back");
       UiPrintAt (1, 1, ATTR_HEADER, L"%d device(s) found", mDevCount);
       UiPrintAt (1, 2, ATTR_HEADER, L" Seg  Bus Dev Fn  Vendor Device  Class     Type");
       Redraw = FALSE;
@@ -424,6 +688,13 @@ PciViewRun (
         ScanPci ();
         Sel    = 0;
         Top    = 0;
+        Redraw = TRUE;
+        break;
+      case SCAN_F6:
+        if (!PciTreeRun ()) {
+          return;
+        }
+
         Redraw = TRUE;
         break;
       default:
