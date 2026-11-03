@@ -1,6 +1,6 @@
 # uefirrw
 
-uefirrw BIOS tool under UEFI — a text-mode, RW-Everything style hardware read/write utility that runs in the UEFI Shell (or boots directly as `BOOTX64.EFI`). No OS needed.
+**UEFI Resource Read & Write Tool** — a text-mode, RW-Everything style hardware read/write utility that runs in the UEFI Shell (or boots directly as `BOOTX64.EFI`). No OS needed.
 
 ![Menu bar](docs/images/menu-bar.png)
 
