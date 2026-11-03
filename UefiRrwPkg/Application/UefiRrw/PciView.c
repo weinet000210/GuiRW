@@ -1337,3 +1337,57 @@ PciViewRun (
     }
   }
 }
+
+/**
+  File > Dump All: device list, PCIe tree and every device's info page.
+**/
+VOID
+PciDump (
+  IN OUT TEXT_DOC  *Out
+  )
+{
+  TEXT_DOC       Tree;
+  UINTN          Index;
+  PCI_DEV_ENTRY  *E;
+  TEXT_DOC       *Saved;
+
+  ScanPci ();
+  DocAdd (Out, ATTR_NORMAL, L"==== PCI Devices (%d) ====", mDevCount);
+  DocAdd (Out, ATTR_NORMAL, L" Seg  Bus Dev Fn  Vendor Device  Class   Type");
+  for (Index = 0; Index < mDevCount; Index++) {
+    E = &mDevs[Index];
+    DocAdd (
+      Out,
+      ATTR_NORMAL,
+      L" %04X  %02X  %02X  %X   %04X   %04X    %02X%02X%02X  %s",
+      E->Segment,
+      E->Bus,
+      E->Dev,
+      E->Func,
+      E->VendorId,
+      E->DeviceId,
+      E->BaseClass,
+      E->SubClass,
+      E->ProgIf,
+      ClassName (E->BaseClass, E->SubClass)
+      );
+  }
+
+  DocAdd (Out, ATTR_NORMAL, L"");
+  DocAdd (Out, ATTR_NORMAL, L"==== PCIe Tree ====");
+  BuildPciTree (&Tree);
+  for (Index = 0; Index < Tree.Count; Index++) {
+    DocAdd (Out, ATTR_NORMAL, L"%s", Tree.Lines[Index].Text);
+  }
+
+  DocFree (&Tree);
+  DocAdd (Out, ATTR_NORMAL, L"");
+  Saved       = gDocCapture;
+  gDocCapture = Out;
+  for (Index = 0; Index < mDevCount; Index++) {
+    DocAdd (Out, ATTR_NORMAL, L"---- %04X:%02X:%02X.%X ----", mDevs[Index].Segment, mDevs[Index].Bus, mDevs[Index].Dev, mDevs[Index].Func);
+    ShowPciInfo (&mDevs[Index]);
+  }
+
+  gDocCapture = Saved;
+}

@@ -1,11 +1,15 @@
 /** @file
-  uefirrw - a text-mode, RW-Everything style hardware read/write utility
-  for the UEFI Shell.
+  uefirrw - UEFI Resource Read & Write Tool, a text-mode hardware
+  read/write utility for the UEFI Shell.
 
   SPDX-License-Identifier: BSD-2-Clause-Patent
 **/
 
 #include "UefiRrw.h"
+#include <Library/UefiRuntimeServicesTableLib.h>
+#include <Protocol/FormBrowser2.h>
+#include <Protocol/HiiDatabase.h>
+#include <Guid/GlobalVariable.h>
 
 #define UEFIRRW_AUTHOR  L"weinet"
 #define UEFIRRW_MAIL    L"weinet0002@gmail.com"
@@ -51,7 +55,7 @@ ShowAbout (
   UiModeText (Mode, sizeof (Mode));
   DocInit (&Doc);
   DocAdd (&Doc, ATTR_NORMAL, L"");
-  DocAdd (&Doc, ATTR_HEADER, L"   uefirrw - RW-Everything style hardware utility for UEFI");
+  DocAdd (&Doc, ATTR_HEADER, L"   uefirrw - UEFI Resource Read & Write Tool");
   DocAdd (&Doc, ATTR_NORMAL, L"");
   DocAdd (&Doc, ATTR_NORMAL, L"   Version      %s", UEFIRRW_VERSION);
   DocAdd (&Doc, ATTR_NORMAL, L"   Build date   %s", Date);
@@ -100,9 +104,207 @@ RunModule (
     case UI_MOD_COM:
       ComViewRun ();
       break;
+    case UI_MOD_CMOS:
+      CmosViewRun ();
+      break;
+    case UI_MOD_SIO:
+      SioViewRun ();
+      break;
+    case UI_MOD_EC:
+      EcViewRun ();
+      break;
+    case UI_MOD_FILES:
+      FileViewRun ();
+      break;
+    case UI_MOD_EDIT:
+      EditViewRun ();
+      break;
     default:
       break;
   }
+}
+
+/**
+  File > Dump All to File: PCI, ACPI (with ASL), SMBIOS, USB and Super I/O
+  into DUMPnnnn.TXT next to uefirrw.efi.
+**/
+STATIC
+VOID
+DumpAll (
+  VOID
+  )
+{
+  TEXT_DOC    Doc;
+  UINT8       *Text;
+  UINTN       Size;
+  CHAR16      Name[32];
+  CHAR16      Msg[96];
+  CHAR16      Date[16];
+  EFI_STATUS  Status;
+
+  BuildDate (Date, sizeof (Date));
+  DocInit (&Doc);
+  DocAdd (&Doc, ATTR_NORMAL, L"uefirrw %s (built %s) full dump", UEFIRRW_VERSION, Date);
+  DocAdd (&Doc, ATTR_NORMAL, L"");
+  UiNotify (ATTR_HEADER, L"Dumping PCI...");
+  PciDump (&Doc);
+  UiNotify (ATTR_HEADER, L"Dumping ACPI...");
+  AcpiDump (&Doc);
+  UiNotify (ATTR_HEADER, L"Dumping SMBIOS...");
+  SmbiosDump (&Doc);
+  UiNotify (ATTR_HEADER, L"Dumping USB...");
+  UsbDump (&Doc);
+  SioDump (&Doc);
+  Text = DocToAscii (&Doc, &Size);
+  DocFree (&Doc);
+  if (Text == NULL) {
+    UiNotify (ATTR_WARN, L" Out of memory. ");
+    return;
+  }
+
+  FileNextName (L"DUMP", L"TXT", Name, sizeof (Name));
+  Status = FileSaveOnImageVolume (Name, Text, Size);
+  FreePool (Text);
+  if (EFI_ERROR (Status)) {
+    UnicodeSPrint (Msg, sizeof (Msg), L" Could not save %s: %r ", Name, Status);
+    UiNotify (ATTR_WARN, Msg);
+  } else {
+    UnicodeSPrint (Msg, sizeof (Msg), L"Saved %s\\%s (%d KB)", FileImageVolumeName (), Name, Size / 1024);
+    UiNotify (ATTR_HEADER, Msg);
+  }
+}
+
+STATIC
+BOOLEAN
+HasWord (
+  IN CONST CHAR16  *Text,
+  IN CONST CHAR16  *Word
+  )
+{
+  return (BOOLEAN)(DocFindIn (Text, Word) >= 0);
+}
+
+/**
+  Find the firmware's setup application among the Boot#### load options and
+  start it. When the user leaves setup without resetting, it returns here.
+**/
+STATIC
+BOOLEAN
+StartSetupBootOption (
+  VOID
+  )
+{
+  CHAR16                    VarName[64];
+  UINTN                     NameSize;
+  EFI_GUID                  Guid;
+  EFI_STATUS                Status;
+  UINT8                     *Opt;
+  UINTN                     OptSize;
+  CHAR16                    *Desc;
+  EFI_DEVICE_PATH_PROTOCOL  *Dp;
+  EFI_HANDLE                Image;
+  BOOLEAN                   Started;
+
+  Started    = FALSE;
+  VarName[0] = 0;
+  for ( ; ;) {
+    NameSize = sizeof (VarName);
+    Status   = gRT->GetNextVariableName (&NameSize, VarName, &Guid);
+    if (EFI_ERROR (Status)) {
+      break;
+    }
+
+    if (!CompareGuid (&Guid, &gEfiGlobalVariableGuid) || (StrLen (VarName) != 8) || (StrnCmp (VarName, L"Boot", 4) != 0) ||
+        (HexDigitValue (VarName[4]) < 0) || (HexDigitValue (VarName[5]) < 0) || (HexDigitValue (VarName[6]) < 0) || (HexDigitValue (VarName[7]) < 0))
+    {
+      continue;
+    }
+
+    Status = GetVariable2 (VarName, &gEfiGlobalVariableGuid, (VOID **)&Opt, &OptSize);
+    if (EFI_ERROR (Status) || (Opt == NULL)) {
+      continue;
+    }
+
+    Desc = (CHAR16 *)(Opt + 6);
+    if ((OptSize > 8) && (HasWord (Desc, L"setup") || HasWord (Desc, L"uiapp")) && !HasWord (Desc, L"shell")) {
+      Dp = (EFI_DEVICE_PATH_PROTOCOL *)((UINT8 *)Desc + StrSize (Desc));
+      UiRestore ();
+      Status = gBS->LoadImage (FALSE, gImageHandle, Dp, NULL, 0, &Image);
+      if (!EFI_ERROR (Status)) {
+        gBS->StartImage (Image, NULL, NULL);
+        Started = TRUE;
+      }
+
+      UiInit ();
+    }
+
+    FreePool (Opt);
+    if (Started) {
+      break;
+    }
+  }
+
+  return Started;
+}
+
+/**
+  Fallback: show every HII form set through the firmware's form browser.
+**/
+STATIC
+BOOLEAN
+SendAllForms (
+  VOID
+  )
+{
+  EFI_FORM_BROWSER2_PROTOCOL  *Browser;
+  EFI_HII_DATABASE_PROTOCOL   *Hii;
+  EFI_HII_HANDLE              *Handles;
+  UINTN                       Size;
+  EFI_STATUS                  Status;
+
+  if (EFI_ERROR (gBS->LocateProtocol (&gEfiFormBrowser2ProtocolGuid, NULL, (VOID **)&Browser)) ||
+      EFI_ERROR (gBS->LocateProtocol (&gEfiHiiDatabaseProtocolGuid, NULL, (VOID **)&Hii)))
+  {
+    return FALSE;
+  }
+
+  Size   = 0;
+  Status = Hii->ListPackageLists (Hii, EFI_HII_PACKAGE_FORMS, NULL, &Size, NULL);
+  if ((Status != EFI_BUFFER_TOO_SMALL) || (Size == 0)) {
+    return FALSE;
+  }
+
+  Handles = AllocatePool (Size);
+  if (Handles == NULL) {
+    return FALSE;
+  }
+
+  Status = Hii->ListPackageLists (Hii, EFI_HII_PACKAGE_FORMS, NULL, &Size, Handles);
+  if (!EFI_ERROR (Status)) {
+    UiRestore ();
+    Status = Browser->SendForm (Browser, Handles, Size / sizeof (EFI_HII_HANDLE), NULL, 0, NULL, NULL);
+    UiInit ();
+  }
+
+  FreePool (Handles);
+  return (BOOLEAN) !EFI_ERROR (Status);
+}
+
+STATIC
+VOID
+ReturnToSetup (
+  VOID
+  )
+{
+  EFI_INPUT_KEY  Key;
+
+  UiNotify (ATTR_HEADER, L"Looking for the setup application...");
+  if (StartSetupBootOption () || SendAllForms ()) {
+    return;
+  }
+
+  UiStatus (ATTR_WARN, L" No setup application found. Use File > Exit, then type exit in the shell. (any key) ");
+  UiReadKey (&Key);
 }
 
 EFI_STATUS
@@ -123,7 +325,7 @@ UefiMain (
 
   //
   // Like RU: start on the PCI list; F10 (or Esc out of a screen) opens the
-  // menu bar to move between modules. Exit is under Help.
+  // menu bar to move between modules. Exit is under File.
   //
   Mod = UI_MOD_PCI;
   for ( ; ;) {
@@ -145,6 +347,22 @@ UefiMain (
 
     if (Next == UI_MOD_ABOUT) {
       ShowAbout ();
+      continue;
+    }
+
+    if (Next == UI_ACT_DUMP) {
+      DumpAll ();
+      continue;
+    }
+
+    if (Next == UI_ACT_SETUP) {
+      ReturnToSetup ();
+      continue;
+    }
+
+    if ((Next == UI_ACT_WARM) || (Next == UI_ACT_COLD)) {
+      UiRestore ();
+      gRT->ResetSystem ((Next == UI_ACT_WARM) ? EfiResetWarm : EfiResetCold, EFI_SUCCESS, 0, NULL);
       continue;
     }
 

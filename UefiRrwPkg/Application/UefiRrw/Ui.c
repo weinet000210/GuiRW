@@ -648,7 +648,8 @@ UiShowHelp (
 {
   STATIC CONST CHAR16  *Global[] = {
     L"F1          This help",
-    L"F10         Menu bar (PCI Memory IO MSR ACPI SMBIOS USB COM Help)",
+    L"F10         Menu bar (File Bus Space Tables Devices Help)",
+    L"F12         Screenshot (SCRnnnn.BMP next to uefirrw.efi)",
     L"Esc         Back / close"
   };
   UI_CELL        *Saved;
@@ -703,11 +704,64 @@ UiShowHelp (
 }
 INTN   gUiCurrent = UI_MOD_PCI;
 
-STATIC CONST CHAR16  *mBarItems[] = {
-  L"PCI", L"Memory", L"IO", L"MSR", L"ACPI", L"SMBIOS", L"USB", L"COM", L"Help"
+typedef struct {
+  CONST CHAR16    *Name;
+  INTN            Id;
+} UI_MENU_ITEM;
+
+#define UI_ACT_KEYS      100
+#define UI_ACT_SAVETEXT  101
+#define UI_ACT_SHOT      102
+
+STATIC CONST UI_MENU_ITEM  mFileItems[] = {
+  { L"Save Screen as Text", UI_ACT_SAVETEXT },
+  { L"Screenshot     F12",  UI_ACT_SHOT     },
+  { L"Dump All to File",    UI_ACT_DUMP     },
+  { L"File Browser",        UI_MOD_FILES    },
+  { L"Text Editor",         UI_MOD_EDIT     },
+  { L"Return to Setup",     UI_ACT_SETUP    },
+  { L"Warm Reset",          UI_ACT_WARM     },
+  { L"Cold Reset",          UI_ACT_COLD     },
+  { L"Exit",                UI_MOD_EXIT     }
+};
+STATIC CONST UI_MENU_ITEM  mBusItems[] = {
+  { L"PCI",         UI_MOD_PCI },
+  { L"USB",         UI_MOD_USB }
+};
+STATIC CONST UI_MENU_ITEM  mSpaceItems[] = {
+  { L"Memory",      UI_MOD_MEM  },
+  { L"IO",          UI_MOD_IO   },
+  { L"MSR",         UI_MOD_MSR  },
+  { L"CMOS",        UI_MOD_CMOS },
+  { L"EC",          UI_MOD_EC   }
+};
+STATIC CONST UI_MENU_ITEM  mTableItems[] = {
+  { L"ACPI",        UI_MOD_ACPI   },
+  { L"SMBIOS",      UI_MOD_SMBIOS }
+};
+STATIC CONST UI_MENU_ITEM  mDeviceItems[] = {
+  { L"Super I/O",   UI_MOD_SIO },
+  { L"COM Port",    UI_MOD_COM }
+};
+STATIC CONST UI_MENU_ITEM  mHelpItems[] = {
+  { L"Keys       F1", UI_ACT_KEYS  },
+  { L"About",         UI_MOD_ABOUT }
 };
 
-STATIC CONST CHAR16  *mHelpItems[] = { L"Keys (F1)", L"About", L"Exit" };
+typedef struct {
+  CONST CHAR16          *Name;
+  CONST UI_MENU_ITEM    *Items;
+  UINTN                 Count;
+} UI_MENU;
+
+STATIC CONST UI_MENU  mMenus[] = {
+  { L"File",    mFileItems,   ARRAY_SIZE (mFileItems)   },
+  { L"Bus",     mBusItems,    ARRAY_SIZE (mBusItems)    },
+  { L"Space",   mSpaceItems,  ARRAY_SIZE (mSpaceItems)  },
+  { L"Tables",  mTableItems,  ARRAY_SIZE (mTableItems)  },
+  { L"Devices", mDeviceItems, ARRAY_SIZE (mDeviceItems) },
+  { L"Help",    mHelpItems,   ARRAY_SIZE (mHelpItems)   }
+};
 
 STATIC
 UINTN
@@ -720,15 +774,42 @@ BarCol (
 
   Col = 1;
   for (Index = 0; Index < Item; Index++) {
-    Col += StrLen (mBarItems[Index]) + 2;
+    Col += StrLen (mMenus[Index].Name) + 2;
   }
 
   return Col;
 }
 
 /**
-  Draw row 0. Sel >= 0 highlights that entry (menu active); otherwise the
-  current module is shown in white.
+  Menu index and item index holding module Id, FALSE when none does.
+**/
+STATIC
+BOOLEAN
+FindItem (
+  IN  INTN   Id,
+  OUT UINTN  *Menu,
+  OUT UINTN  *Item
+  )
+{
+  UINTN  M;
+  UINTN  I;
+
+  for (M = 0; M < ARRAY_SIZE (mMenus); M++) {
+    for (I = 0; I < mMenus[M].Count; I++) {
+      if (mMenus[M].Items[I].Id == Id) {
+        *Menu = M;
+        *Item = I;
+        return TRUE;
+      }
+    }
+  }
+
+  return FALSE;
+}
+
+/**
+  Draw row 0. Sel >= 0 highlights that menu (menu active); otherwise the
+  menu holding the current screen is shown in white.
 **/
 VOID
 UiDrawMenuBar (
@@ -737,26 +818,185 @@ UiDrawMenuBar (
 {
   UINTN  Index;
   UINTN  Attr;
+  UINTN  CurMenu;
+  UINTN  CurItem;
+
+  if (!FindItem (gUiCurrent, &CurMenu, &CurItem)) {
+    CurMenu = (UINTN)-1;
+  }
 
   UiFillLine (0, ATTR_TITLE);
-  for (Index = 0; Index < ARRAY_SIZE (mBarItems); Index++) {
+  for (Index = 0; Index < ARRAY_SIZE (mMenus); Index++) {
     if ((INTN)Index == Sel) {
       Attr = ATTR_HILITE;
-    } else if ((Sel < 0) && ((INTN)Index == gUiCurrent)) {
+    } else if ((Sel < 0) && (Index == CurMenu)) {
       Attr = EFI_TEXT_ATTR (EFI_WHITE, EFI_DARKGRAY);
     } else {
       Attr = ATTR_TITLE;
     }
 
-    UiPrintAt (BarCol (Index), 0, Attr, L" %s ", mBarItems[Index]);
+    UiPrintAt (BarCol (Index), 0, Attr, L" %s ", mMenus[Index].Name);
   }
 }
 
 /**
-  Interactive menu bar over whatever is on screen. The screen is restored
-  when the menu closes.
+  Show Msg on the status line for a moment.
+**/
+VOID
+UiNotify (
+  IN UINTN         Attr,
+  IN CONST CHAR16  *Msg
+  )
+{
+  UiStatus (Attr, L"%s", Msg);
+  UiFlush ();
+  gBS->Stall (1200 * 1000);
+}
 
-  @return UI_MOD_* chosen, or -1 when cancelled
+STATIC
+VOID
+ReportSave (
+  IN EFI_STATUS    Status,
+  IN CONST CHAR16  *Name
+  )
+{
+  CHAR16  Msg[96];
+
+  if (EFI_ERROR (Status)) {
+    UnicodeSPrint (Msg, sizeof (Msg), L" Could not save %s: %r ", Name, Status);
+    UiNotify (ATTR_WARN, Msg);
+  } else {
+    UnicodeSPrint (Msg, sizeof (Msg), L"Saved %s\\%s", FileImageVolumeName (), Name);
+    UiNotify (ATTR_HEADER, Msg);
+  }
+}
+
+/**
+  Save the text of the screen as SCRnnnn.TXT.
+**/
+VOID
+UiSaveScreenText (
+  VOID
+  )
+{
+  UINT8       *Buf;
+  UINTN       Pos;
+  UINTN       Row;
+  UINTN       Col;
+  UINTN       End;
+  CHAR16      Ch;
+  CHAR16      Name[32];
+  EFI_STATUS  Status;
+
+  Buf = AllocatePool (gScreenRows * (gScreenCols + 2));
+  if (Buf == NULL) {
+    return;
+  }
+
+  Pos = 0;
+  for (Row = 0; Row < gScreenRows; Row++) {
+    End = gScreenCols;
+    while ((End > 0) && (mCells[Row * gScreenCols + End - 1].Ch == L' ')) {
+      End--;
+    }
+
+    for (Col = 0; Col < End; Col++) {
+      Ch         = mCells[Row * gScreenCols + Col].Ch;
+      Buf[Pos++] = ((Ch >= 0x20) && (Ch < 0x7F)) ? (UINT8)Ch : '?';
+    }
+
+    Buf[Pos++] = '\r';
+    Buf[Pos++] = '\n';
+  }
+
+  FileNextName (L"SCR", L"TXT", Name, sizeof (Name));
+  Status = FileSaveOnImageVolume (Name, Buf, Pos);
+  FreePool (Buf);
+  ReportSave (Status, Name);
+}
+
+/**
+  Save the screen as a 24-bit SCRnnnn.BMP, drawn from the cell buffer with
+  the built-in font at 1:1 (8x19 per cell), so it works with or without GOP.
+**/
+VOID
+UiScreenshot (
+  VOID
+  )
+{
+  UINTN        W;
+  UINTN        H;
+  UINTN        Stride;
+  UINTN        Size;
+  UINT8        *Bmp;
+  UINT8        *Px;
+  UINTN        Row;
+  UINTN        Col;
+  UINTN        Y;
+  UINTN        X;
+  UI_CELL      *Cell;
+  CONST UINT8  *Glyph;
+  UINT8        Bits;
+  CONST EFI_GRAPHICS_OUTPUT_BLT_PIXEL  *C;
+  CHAR16       Name[32];
+  EFI_STATUS   Status;
+
+  W      = gScreenCols * GLYPH_W;
+  H      = gScreenRows * GLYPH_H;
+  Stride = (W * 3 + 3) & ~(UINTN)3;
+  Size   = 54 + Stride * H;
+  Bmp    = AllocateZeroPool (Size);
+  if (Bmp == NULL) {
+    return;
+  }
+
+  Bmp[0] = 'B';
+  Bmp[1] = 'M';
+  WriteUnaligned32 ((UINT32 *)(Bmp + 2), (UINT32)Size);
+  WriteUnaligned32 ((UINT32 *)(Bmp + 10), 54);
+  WriteUnaligned32 ((UINT32 *)(Bmp + 14), 40);
+  WriteUnaligned32 ((UINT32 *)(Bmp + 18), (UINT32)W);
+  WriteUnaligned32 ((UINT32 *)(Bmp + 22), (UINT32)H);
+  WriteUnaligned16 ((UINT16 *)(Bmp + 26), 1);
+  WriteUnaligned16 ((UINT16 *)(Bmp + 28), 24);
+  WriteUnaligned32 ((UINT32 *)(Bmp + 34), (UINT32)(Stride * H));
+  for (Row = 0; Row < gScreenRows; Row++) {
+    for (Col = 0; Col < gScreenCols; Col++) {
+      Cell  = &mCells[Row * gScreenCols + Col];
+      Glyph = (Cell->Ch < 128) ? mGlyph[Cell->Ch] : NULL;
+      if ((Glyph == NULL) && (Cell->Ch != L' ')) {
+        Glyph = mGlyph[L'?'];
+      }
+
+      for (Y = 0; Y < GLYPH_H; Y++) {
+        Bits = (Glyph != NULL) ? Glyph[Y] : 0;
+        //
+        // BMP rows run bottom-up.
+        //
+        Px = Bmp + 54 + (H - 1 - (Row * GLYPH_H + Y)) * Stride + Col * GLYPH_W * 3;
+        for (X = 0; X < GLYPH_W; X++) {
+          C       = (Bits & (0x80 >> X)) ? &mPalette[Cell->Attr & 0x0F] : &mPalette[(Cell->Attr >> 4) & 0x07];
+          Px[0]   = C->Blue;
+          Px[1]   = C->Green;
+          Px[2]   = C->Red;
+          Px     += 3;
+        }
+      }
+    }
+  }
+
+  FileNextName (L"SCR", L"BMP", Name, sizeof (Name));
+  Status = FileSaveOnImageVolume (Name, Bmp, Size);
+  FreePool (Bmp);
+  ReportSave (Status, Name);
+}
+
+/**
+  Interactive menu bar over whatever is on screen: Left/Right picks a menu,
+  its list drops down, Up/Down picks an entry. The screen is restored when
+  the menu closes. Keys, Save Screen and Screenshot run in place.
+
+  @return UI_MOD_* / UI_ACT_* chosen, or -1 when cancelled
 **/
 INTN
 UiTopMenu (
@@ -766,18 +1006,26 @@ UiTopMenu (
   UI_CELL        *Saved;
   UINTN          Size;
   INTN           Sel;
-  INTN           Sub;
+  UINTN          Sub;
   INTN           Result;
   UINTN          Index;
   UINTN          Col;
+  UINTN          Width;
+  UINTN          CurMenu;
+  UINTN          CurItem;
+  INTN           Id;
   EFI_INPUT_KEY  Key;
-  BOOLEAN        Open;
 
   Size  = gScreenCols * gScreenRows * sizeof (UI_CELL);
   Saved = AllocateCopyPool (Size, mCells);
-  Sel   = ((gUiCurrent >= 0) && (gUiCurrent < (INTN)ARRAY_SIZE (mBarItems))) ? gUiCurrent : 0;
-  Sub   = 0;
-  Open  = FALSE;
+  if (FindItem (gUiCurrent, &CurMenu, &CurItem)) {
+    Sel = (INTN)CurMenu;
+    Sub = CurItem;
+  } else {
+    Sel = 0;
+    Sub = 0;
+  }
+
   Result = -1;
   for ( ; ;) {
     if (Saved != NULL) {
@@ -785,14 +1033,23 @@ UiTopMenu (
     }
 
     UiDrawMenuBar (Sel);
-    if (Open) {
-      Col = BarCol ((UINTN)Sel);
-      for (Index = 0; Index < ARRAY_SIZE (mHelpItems); Index++) {
-        UiPrintAt (Col, 1 + Index, ((INTN)Index == Sub) ? ATTR_HILITE : ATTR_TITLE, L" %-12s ", mHelpItems[Index]);
-      }
+    Col   = BarCol ((UINTN)Sel);
+    Width = 0;
+    for (Index = 0; Index < mMenus[Sel].Count; Index++) {
+      Width = MAX (Width, StrLen (mMenus[Sel].Items[Index].Name));
     }
 
-    UiStatus (ATTR_DIM, L"Left/Right: choose   Enter: open   Esc: close menu");
+    if (Col + Width + 4 > gScreenCols) {
+      Col = gScreenCols - Width - 4;
+    }
+
+    UiPrintAt (Col, 1, ATTR_TITLE, L"%-*s", Width + 4, L"");
+    for (Index = 0; Index < mMenus[Sel].Count; Index++) {
+      UiPrintAt (Col, 2 + Index, (Index == Sub) ? ATTR_HILITE : ATTR_TITLE, L"  %-*s  ", Width, mMenus[Sel].Items[Index].Name);
+    }
+
+    UiPrintAt (Col, 2 + mMenus[Sel].Count, ATTR_TITLE, L"%-*s", Width + 4, L"");
+    UiStatus (ATTR_DIM, L"Left/Right: menu   Up/Down: item   Enter: open   Esc: close");
     UiFlush ();
     gBS->WaitForEvent (1, &gST->ConIn->WaitForKey, &Index);
     if (EFI_ERROR (gST->ConIn->ReadKeyStroke (gST->ConIn, &Key))) {
@@ -800,47 +1057,40 @@ UiTopMenu (
     }
 
     if ((Key.ScanCode == SCAN_ESC) || (Key.ScanCode == SCAN_F10)) {
-      if (Open) {
-        Open = FALSE;
-        continue;
-      }
-
       break;
     }
 
     if (Key.ScanCode == SCAN_LEFT) {
-      Sel  = (Sel == 0) ? (INTN)ARRAY_SIZE (mBarItems) - 1 : Sel - 1;
-      Open = FALSE;
+      Sel = (Sel == 0) ? (INTN)ARRAY_SIZE (mMenus) - 1 : Sel - 1;
+      Sub = 0;
     } else if (Key.ScanCode == SCAN_RIGHT) {
-      Sel  = (Sel + 1) % (INTN)ARRAY_SIZE (mBarItems);
-      Open = FALSE;
-    } else if (Open && (Key.ScanCode == SCAN_UP)) {
-      Sub = (Sub == 0) ? (INTN)ARRAY_SIZE (mHelpItems) - 1 : Sub - 1;
-    } else if (Open && (Key.ScanCode == SCAN_DOWN)) {
-      Sub = (Sub + 1) % (INTN)ARRAY_SIZE (mHelpItems);
-    } else if ((Key.UnicodeChar == CHAR_CARRIAGE_RETURN) || (Key.ScanCode == SCAN_DOWN)) {
-      if (Sel != UI_MOD_HELP) {
-        if (Key.UnicodeChar == CHAR_CARRIAGE_RETURN) {
-          Result = Sel;
-          break;
+      Sel = (Sel + 1) % (INTN)ARRAY_SIZE (mMenus);
+      Sub = 0;
+    } else if (Key.ScanCode == SCAN_UP) {
+      Sub = (Sub == 0) ? mMenus[Sel].Count - 1 : Sub - 1;
+    } else if (Key.ScanCode == SCAN_DOWN) {
+      Sub = (Sub + 1) % mMenus[Sel].Count;
+    } else if (Key.UnicodeChar == CHAR_CARRIAGE_RETURN) {
+      Id = mMenus[Sel].Items[Sub].Id;
+      if ((Id == UI_ACT_KEYS) || (Id == UI_ACT_SAVETEXT) || (Id == UI_ACT_SHOT)) {
+        if (Saved != NULL) {
+          CopyMem (mCells, Saved, Size);
         }
-      } else if (!Open) {
-        Open = TRUE;
-        Sub  = 0;
-      } else {
-        if (Sub == 0) {
-          if (Saved != NULL) {
-            CopyMem (mCells, Saved, Size);
-          }
 
+        UiFlush ();
+        if (Id == UI_ACT_KEYS) {
           UiShowHelp ();
-          Open = FALSE;
-          continue;
+        } else if (Id == UI_ACT_SAVETEXT) {
+          UiSaveScreenText ();
+        } else {
+          UiScreenshot ();
         }
 
-        Result = (Sub == 1) ? UI_MOD_ABOUT : UI_MOD_EXIT;
         break;
       }
+
+      Result = Id;
+      break;
     }
   }
 
@@ -949,6 +1199,11 @@ UiReadKeyTimeout (
 
     if (Key->ScanCode == SCAN_F1) {
       UiShowHelp ();
+      continue;
+    }
+
+    if (Key->ScanCode == SCAN_F12) {
+      UiScreenshot ();
       continue;
     }
 
