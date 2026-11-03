@@ -11,6 +11,7 @@
 **/
 
 #include "UefiRrw.h"
+#include <Library/UefiRuntimeServicesTableLib.h>
 #include <Protocol/UsbIo.h>
 #include <Protocol/Usb2HostController.h>
 #include <Protocol/PciIo.h>
@@ -485,6 +486,205 @@ FindChild (
 }
 
 //
+// ---- Hot-plug tracking --------------------------------------------------------
+//
+// Each scan is compared with the previous one by position (controller,
+// port chain) and VID:PID. New devices are drawn green and removed ones
+// stay in place in red, both for HOTPLUG_SECONDS.
+//
+
+#define HOTPLUG_SECONDS  20
+#define AUTO_REFRESH_MS  5000
+
+typedef struct {
+  EFI_HANDLE    HcHandle;
+  UINTN         Depth;
+  UINT8         Port[MAX_DEPTH];
+  UINT16        Vid;
+  UINT16        Pid;
+  UINT64        Since;            // seconds stamp of the change
+  CHAR16        Label[96];
+} USB_TRACK;
+
+STATIC USB_TRACK  mPrev[MAX_DEV];
+STATIC UINTN      mPrevCount;
+STATIC BOOLEAN    mHavePrev;
+STATIC USB_TRACK  mNew[MAX_DEV];
+STATIC UINTN      mNewCount;
+STATIC USB_TRACK  mGone[MAX_DEV];
+STATIC UINTN      mGoneCount;
+STATIC BOOLEAN    mAuto;
+
+STATIC
+UINT64
+NowSeconds (
+  VOID
+  )
+{
+  EFI_TIME  T;
+
+  if (EFI_ERROR (gRT->GetTime (&T, NULL))) {
+    return 0;
+  }
+
+  return ((((UINT64)T.Year * 12 + T.Month) * 31 + T.Day) * 24 + T.Hour) * 3600 + (UINT64)T.Minute * 60 + T.Second;
+}
+
+STATIC
+VOID
+TrackFromDev (
+  IN  USB_DEV    *D,
+  OUT USB_TRACK  *T
+  )
+{
+  ZeroMem (T, sizeof (*T));
+  T->HcHandle = mHc[D->Hc].Handle;
+  T->Depth    = D->Depth;
+  CopyMem (T->Port, D->Port, sizeof (T->Port));
+  T->Vid = ReadUnaligned16 ((UINT16 *)&D->Desc[8]);
+  T->Pid = ReadUnaligned16 ((UINT16 *)&D->Desc[10]);
+  UnicodeSPrint (T->Label, sizeof (T->Label), L"[%04X:%04X] %s", T->Vid, T->Pid, D->Product);
+}
+
+STATIC
+BOOLEAN
+SameDevice (
+  IN USB_TRACK  *A,
+  IN USB_TRACK  *B
+  )
+{
+  return (BOOLEAN)((A->HcHandle == B->HcHandle) && (A->Depth == B->Depth) &&
+                   (CompareMem (A->Port, B->Port, A->Depth) == 0) && (A->Vid == B->Vid) && (A->Pid == B->Pid));
+}
+
+/**
+  Compare the fresh scan with the previous one and age out old marks.
+**/
+STATIC
+VOID
+UpdateHotplug (
+  VOID
+  )
+{
+  STATIC USB_TRACK  Cur[MAX_DEV];
+  UINTN      Index;
+  UINTN      J;
+  UINTN      Keep;
+  UINT64     Now;
+  BOOLEAN    Found;
+
+  Now = NowSeconds ();
+  for (Index = 0; Index < mDevCount; Index++) {
+    TrackFromDev (&mDev[Index], &Cur[Index]);
+  }
+
+  if (mHavePrev) {
+    for (Index = 0; Index < mDevCount; Index++) {
+      Found = FALSE;
+      for (J = 0; (J < mPrevCount) && !Found; J++) {
+        Found = SameDevice (&Cur[Index], &mPrev[J]);
+      }
+
+      if (!Found && (mNewCount < MAX_DEV)) {
+        mNew[mNewCount]       = Cur[Index];
+        mNew[mNewCount].Since = Now;
+        mNewCount++;
+      }
+    }
+
+    for (J = 0; J < mPrevCount; J++) {
+      Found = FALSE;
+      for (Index = 0; (Index < mDevCount) && !Found; Index++) {
+        Found = SameDevice (&Cur[Index], &mPrev[J]);
+      }
+
+      if (!Found && (mGoneCount < MAX_DEV)) {
+        mGone[mGoneCount]       = mPrev[J];
+        mGone[mGoneCount].Since = Now;
+        mGoneCount++;
+      }
+    }
+  }
+
+  //
+  // Drop marks older than HOTPLUG_SECONDS, a "new" mark whose device left,
+  // and a "removed" mark whose device came back.
+  //
+  for (Index = 0, Keep = 0; Index < mNewCount; Index++) {
+    Found = FALSE;
+    for (J = 0; (J < mDevCount) && !Found; J++) {
+      Found = SameDevice (&mNew[Index], &Cur[J]);
+    }
+
+    if (Found && (Now - mNew[Index].Since < HOTPLUG_SECONDS)) {
+      mNew[Keep++] = mNew[Index];
+    }
+  }
+
+  mNewCount = Keep;
+  for (Index = 0, Keep = 0; Index < mGoneCount; Index++) {
+    Found = FALSE;
+    for (J = 0; (J < mDevCount) && !Found; J++) {
+      Found = SameDevice (&mGone[Index], &Cur[J]);
+    }
+
+    if (!Found && (Now - mGone[Index].Since < HOTPLUG_SECONDS)) {
+      mGone[Keep++] = mGone[Index];
+    }
+  }
+
+  mGoneCount = Keep;
+  CopyMem (mPrev, Cur, mDevCount * sizeof (USB_TRACK));
+  mPrevCount = mDevCount;
+  mHavePrev  = TRUE;
+}
+
+STATIC
+BOOLEAN
+IsNew (
+  IN USB_DEV  *D
+  )
+{
+  USB_TRACK  T;
+  UINTN      Index;
+
+  TrackFromDev (D, &T);
+  for (Index = 0; Index < mNewCount; Index++) {
+    if (SameDevice (&T, &mNew[Index])) {
+      return TRUE;
+    }
+  }
+
+  return FALSE;
+}
+
+/**
+  A recently removed device that sat on this port, or NULL.
+**/
+STATIC
+USB_TRACK *
+GoneAt (
+  IN UINTN        Hc,
+  IN CONST UINT8  *Chain,
+  IN UINTN        Depth,
+  IN UINT8        Port
+  )
+{
+  UINTN  Index;
+
+  for (Index = 0; Index < mGoneCount; Index++) {
+    if ((mGone[Index].HcHandle == mHc[Hc].Handle) && (mGone[Index].Depth == Depth + 1) &&
+        ((Depth == 0) || (CompareMem (mGone[Index].Port, Chain, Depth) == 0)) &&
+        (mGone[Index].Port[Depth] == Port))
+    {
+      return &mGone[Index];
+    }
+  }
+
+  return NULL;
+}
+
+//
 // ---- Tree ------------------------------------------------------------------------
 //
 
@@ -508,6 +708,7 @@ AddPorts (
   UINT16               Status;
   BOOLEAN              Connected;
   CONST CHAR16         *Speed;
+  USB_TRACK            *Gone;
 
   //
   // When a hub would not report its port count, cover every port a child
@@ -526,10 +727,11 @@ AddPorts (
     if (Child >= 0) {
       D     = &mDev[Child];
       Speed = (D->Speed < ARRAY_SIZE (mSpeedShort)) ? mSpeedShort[D->Speed] : L"--";
-      DocAddItem (
+      DocAddItemAttr (
         Doc,
         Child,
-        L"%*sPort %d: [%04X:%04X] %s  (%s, %s)",
+        IsNew (D) ? EFI_TEXT_ATTR (EFI_LIGHTGREEN, EFI_BLUE) : ATTR_NORMAL,
+        L"%*sPort %d: [%04X:%04X] %s  (%s, %s)%s",
         Indent,
         L"",
         Port + 1,
@@ -537,12 +739,19 @@ AddPorts (
         ReadUnaligned16 ((UINT16 *)&D->Desc[10]),
         D->Product,
         D->IsHub ? L"Hub" : ClassName (D->IfClass),
-        Speed
+        Speed,
+        IsNew (D) ? L"  [new]" : L""
         );
       if (D->IsHub && (D->Depth < MAX_DEPTH)) {
         AddPorts (Doc, Hc, D->Port, D->Depth, D->HubPorts, D);
       }
 
+      continue;
+    }
+
+    Gone = GoneAt (Hc, Chain, Depth, (UINT8)Port);
+    if (Gone != NULL) {
+      DocAdd (Doc, EFI_TEXT_ATTR (EFI_LIGHTRED, EFI_BLUE), L"%*sPort %d: %s  [removed]", Indent, L"", Port + 1, Gone->Label);
       continue;
     }
 
@@ -898,34 +1107,63 @@ UsbViewRun (
   TEXT_DOC  Doc;
   UINTN     Sel;
   INTN      Pick;
-  CHAR16    Header[96];
+  CHAR16    Header[128];
+  BOOLEAN   Scan;
 
   Sel  = 0;
-  Pick = -2;
+  Scan = TRUE;
   for ( ; ;) {
-    if (Pick == -2) {
-      UiStatus (ATTR_DIM, L"Scanning USB...");
-      UiFlush ();
+    if (Scan) {
+      if (!mAuto) {
+        UiStatus (ATTR_DIM, L"Scanning USB...");
+        UiFlush ();
+      }
+
       ScanControllers ();
       ScanDevices ();
       ResolveSpeeds ();
+      UpdateHotplug ();
+      Scan = FALSE;
     }
 
     BuildTree (&Doc);
-    UnicodeSPrint (Header, sizeof (Header), L"%d host controller(s), %d device(s)", mHcCount, mDevCount);
+    UnicodeSPrint (
+      Header,
+      sizeof (Header),
+      L"%d host controller(s), %d device(s)%s",
+      mHcCount,
+      mDevCount,
+      mAuto ? L"    [AUTO REFRESH 5s]  green = new, red = removed" : L""
+      );
+    gDocTimeoutMs = mAuto ? AUTO_REFRESH_MS : 0;
+    gDocKeepTop   = TRUE;
     Pick = DocSelect (
              L"USB Devices",
-             L"Up/Down/PgUp/PgDn: select   Enter: details   F5: rescan   Esc: back",
+             mAuto ? L"Enter: details   F5: rescan   F6: auto refresh OFF   Esc: back"
+                   : L"Up/Down/PgUp/PgDn: select   Enter: details   F5: rescan   F6: auto refresh (5 s)   Esc: back",
              Header,
              &Doc,
              &Sel
              );
+    gDocTimeoutMs = 0;
+    gDocKeepTop   = FALSE;
     DocFree (&Doc);
     if (Pick == -1) {
       return;
     }
 
-    if (Pick == -2) {
+    if ((Pick == -2) || (Pick == -5)) {
+      Scan = TRUE;
+      continue;
+    }
+
+    if (Pick == -3) {
+      mAuto = (BOOLEAN)!mAuto;
+      Scan  = TRUE;
+      continue;
+    }
+
+    if (Pick < 0) {
       continue;
     }
 
@@ -934,5 +1172,7 @@ UsbViewRun (
     } else {
       ShowDevice (&mDev[Pick]);
     }
+
+    Scan = mAuto;
   }
 }

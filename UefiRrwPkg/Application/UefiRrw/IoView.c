@@ -87,7 +87,7 @@ IoViewRun (
   Space.Limit         = 0xFFFF;
   Space.StartOffset   = (UINTN)(Port & 0xFF);
   Space.AllowGoto     = TRUE;
-  Space.ConfirmWrites = TRUE;
+  Space.ConfirmWrites = FALSE;
   Space.AddrDigits    = 4;
   HexEditRun (&Space);
 }

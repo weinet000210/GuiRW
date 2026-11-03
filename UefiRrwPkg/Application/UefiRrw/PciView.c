@@ -409,7 +409,7 @@ OpenDevice (
   Space.Base          = 0;
   Space.Limit         = Limit;
   Space.AllowGoto     = (BOOLEAN)(Limit == 0xFFF);
-  Space.ConfirmWrites = TRUE;
+  Space.ConfirmWrites = FALSE;
   Space.AddrDigits    = 3;
   HexEditRun (&Space);
 }
@@ -544,6 +544,607 @@ BuildPciTree (
   }
 }
 
+
+//
+// ---- Capability / header decode (F4) ----------------------------------------------
+//
+
+STATIC CONST CHAR16  *mCapNames[] = {
+  NULL, L"Power Management", L"AGP", L"VPD", L"Slot ID", L"MSI", L"CompactPCI Hot Swap",
+  L"PCI-X", L"HyperTransport", L"Vendor Specific", L"Debug Port", L"CompactPCI Resource",
+  L"PCI Hot-Plug", L"Bridge Subsystem ID", L"AGP 8x", L"Secure Device", L"PCI Express",
+  L"MSI-X", L"SATA Config", L"Advanced Features", L"Enhanced Allocation", L"Flattening Portal Bridge",
+};
+
+STATIC CONST CHAR16  *mExtCapNames[] = {
+  NULL, L"Advanced Error Reporting", L"Virtual Channel", L"Device Serial Number", L"Power Budgeting",
+  L"RC Link Declaration", L"RC Internal Link Control", L"RC Event Collector Assoc", L"MFVC",
+  L"Virtual Channel (MFVC)", L"RCRB Header", L"Vendor Specific (VSEC)", L"Config Access Correlation",
+  L"Access Control Services", L"ARI", L"ATS", L"SR-IOV", L"MR-IOV", L"Multicast", L"Page Request",
+  L"Reserved (AMD)", L"Resizable BAR", L"Dynamic Power Allocation", L"TPH Requester", L"LTR",
+  L"Secondary PCIe", L"PMUX", L"PASID", L"LN Requester", L"DPC", L"L1 PM Substates", L"PTM",
+  L"M-PCIe", L"FRS Queueing", L"Readiness Time Reporting", L"DVSEC", L"VF Resizable BAR",
+  L"Data Link Feature", L"Physical Layer 16.0 GT/s", L"Lane Margining at Receiver", L"Hierarchy ID",
+  L"NPEM", L"Physical Layer 32.0 GT/s", L"Alternate Protocol", L"SFI", L"Shadow Functions", L"DOE",
+  L"Device 3", L"IDE", L"Physical Layer 64.0 GT/s", L"Flit Logging", L"Flit Perf Measurement",
+  L"Flit Error Injection",
+};
+
+STATIC CONST CHAR16  *mSpeedNames[] = { L"?", L"2.5 GT/s", L"5.0 GT/s", L"8.0 GT/s", L"16.0 GT/s", L"32.0 GT/s", L"64.0 GT/s" };
+STATIC CONST CHAR16  *mPins[]       = { L"INTA", L"INTB", L"INTC", L"INTD" };
+STATIC CONST CHAR16  *mAspmNames[]  = { L"none", L"L0s", L"L1", L"L0s+L1" };
+
+STATIC
+UINT32
+Rd (
+  IN PCI_DEV_ENTRY  *E,
+  IN UINT32         Reg,
+  IN UINTN          Width
+  )
+{
+  UINT64  Val;
+
+  if (EFI_ERROR (CfgRead (E->RootBridge, E->Bus, E->Dev, E->Func, Reg, Width, &Val))) {
+    return (Width == 4) ? 0xFFFFFFFF : ((Width == 2) ? 0xFFFF : 0xFF);
+  }
+
+  return (UINT32)Val;
+}
+
+STATIC
+CONST CHAR16 *
+SpeedName (
+  IN UINTN  Code
+  )
+{
+  return (Code < ARRAY_SIZE (mSpeedNames)) ? mSpeedNames[Code] : L"?";
+}
+
+STATIC
+VOID
+AddBits (
+  IN TEXT_DOC      *Doc,
+  IN CONST CHAR16  *Label,
+  IN UINT32        Value,
+  IN CONST CHAR16  **Names,
+  IN UINTN         Count
+  )
+{
+  CHAR16  Buf[256];
+  UINTN   Pos;
+  UINTN   Bit;
+
+  Pos = UnicodeSPrint (Buf, sizeof (Buf), L"    %-22s %08X", Label, Value);
+  for (Bit = 0; Bit < Count; Bit++) {
+    if ((Names[Bit] != NULL) && ((Value & (1u << Bit)) != 0) && (Pos < 200)) {
+      Pos += UnicodeSPrint (Buf + Pos, sizeof (Buf) - Pos * sizeof (CHAR16), L"  %s", Names[Bit]);
+    }
+  }
+
+  DocAdd (Doc, ((Value != 0) && (Count > 0)) ? ATTR_CHANGED : ATTR_NORMAL, L"%s", Buf);
+}
+
+STATIC CONST CHAR16  *mUeNames[32] = {
+  NULL, NULL, NULL, NULL, L"DataLinkProtocol", L"SurpriseDown", NULL, NULL, NULL, NULL, NULL, NULL,
+  L"PoisonedTLP", L"FlowCtlProtocol", L"CompletionTimeout", L"CompleterAbort", L"UnexpectedCompletion",
+  L"ReceiverOverflow", L"MalformedTLP", L"ECRC", L"UnsupportedRequest", L"ACSViolation",
+  L"UncorrInternal", L"MCBlockedTLP", L"AtomicOpEgressBlocked", L"TLPPrefixBlocked", L"PoisonedTLPEgress",
+};
+
+STATIC CONST CHAR16  *mCeNames[16] = {
+  L"ReceiverError", NULL, NULL, NULL, NULL, NULL, L"BadTLP", L"BadDLLP", L"ReplayNumRollover",
+  NULL, NULL, NULL, L"ReplayTimerTimeout", L"AdvisoryNonFatal", L"CorrInternal", L"HeaderLogOverflow",
+};
+
+STATIC
+VOID
+DecodePcie (
+  IN TEXT_DOC       *Doc,
+  IN PCI_DEV_ENTRY  *E,
+  IN UINT32         P
+  )
+{
+  UINT32  Cap;
+  UINT32  DevCap;
+  UINT32  DevCtl;
+  UINT32  DevSta;
+  UINT32  LnkCap;
+  UINT32  LnkCtl;
+  UINT32  LnkSta;
+  UINT32  SltCap;
+  UINT32  SltSta;
+  UINT32  LnkCap2;
+  UINT32  LnkCtl2;
+  UINT32  DevCap2;
+  UINT32  DevCtl2;
+  UINTN   Type;
+  UINTN   Bit;
+  CHAR16  Speeds[80];
+  UINTN   Pos;
+
+  Cap     = Rd (E, P + 2, 2);
+  DevCap  = Rd (E, P + 4, 4);
+  DevCtl  = Rd (E, P + 8, 2);
+  DevSta  = Rd (E, P + 0x0A, 2);
+  LnkCap  = Rd (E, P + 0x0C, 4);
+  LnkCtl  = Rd (E, P + 0x10, 2);
+  LnkSta  = Rd (E, P + 0x12, 2);
+  Type    = (Cap >> 4) & 0x0F;
+
+  DocAdd (
+    Doc,
+    ATTR_NORMAL,
+    L"    Version %d, %s%s",
+    Cap & 0x0F,
+    ((Type < ARRAY_SIZE (mPcieTypes)) && (mPcieTypes[Type] != NULL)) ? mPcieTypes[Type] : L"Unknown type",
+    (Cap & BIT8) ? L", slot implemented" : L""
+    );
+  DocAdd (
+    Doc,
+    ATTR_NORMAL,
+    L"    DevCap  %08X  MaxPayload supported %d B%s",
+    DevCap,
+    128 << (DevCap & 7),
+    (DevCap & BIT28) ? L", FLR" : L""
+    );
+  DocAdd (
+    Doc,
+    ATTR_NORMAL,
+    L"    DevCtl  %04X      MaxPayload %d B, MaxReadReq %d B%s%s",
+    DevCtl,
+    128 << ((DevCtl >> 5) & 7),
+    128 << ((DevCtl >> 12) & 7),
+    (DevCtl & BIT4) ? L", RelaxedOrd" : L"",
+    (DevCtl & BIT11) ? L", NoSnoop" : L""
+    );
+  DocAdd (
+    Doc,
+    (DevSta & 0x0F) ? ATTR_CHANGED : ATTR_NORMAL,
+    L"    DevSta  %04X      %s%s%s%s%s",
+    DevSta,
+    (DevSta & BIT0) ? L"CorrErr " : L"",
+    (DevSta & BIT1) ? L"NonFatalErr " : L"",
+    (DevSta & BIT2) ? L"FatalErr " : L"",
+    (DevSta & BIT3) ? L"UnsuppReq " : L"",
+    (DevSta & 0x0F) ? L"" : L"no errors"
+    );
+
+  if ((Type != 9) && (Type != 0x0A)) {
+    DocAdd (
+      Doc,
+      ATTR_NORMAL,
+      L"    LnkCap  %08X  Port %d, max %s x%d, ASPM %s",
+      LnkCap,
+      LnkCap >> 24,
+      SpeedName (LnkCap & 0x0F),
+      (LnkCap >> 4) & 0x3F,
+      mAspmNames[(LnkCap >> 10) & 3]
+      );
+    DocAdd (
+      Doc,
+      ATTR_NORMAL,
+      L"    LnkCtl  %04X      ASPM %s%s%s",
+      LnkCtl,
+      mAspmNames[LnkCtl & 3],
+      (LnkCtl & BIT4) ? L", LINK DISABLED" : L"",
+      (LnkCtl & BIT6) ? L", common clock" : L""
+      );
+    DocAdd (
+      Doc,
+      ATTR_HEADER,
+      L"    LnkSta  %04X      %s x%d%s%s%s",
+      LnkSta,
+      ((LnkSta >> 4) & 0x3F) ? SpeedName (LnkSta & 0x0F) : L"link down",
+      (LnkSta >> 4) & 0x3F,
+      (LnkSta & BIT11) ? L", training" : L"",
+      (LnkSta & BIT12) ? L", slot clock" : L"",
+      (LnkSta & BIT13) ? L", DL active" : L""
+      );
+  }
+
+  if (Cap & BIT8) {
+    SltCap = Rd (E, P + 0x14, 4);
+    SltSta = Rd (E, P + 0x1A, 2);
+    DocAdd (
+      Doc,
+      ATTR_NORMAL,
+      L"    SltCap  %08X  Slot #%d%s, SltSta %04X: %s",
+      SltCap,
+      SltCap >> 19,
+      (SltCap & BIT6) ? L", hot-plug capable" : L"",
+      SltSta,
+      (SltSta & BIT6) ? L"card present" : L"empty"
+      );
+  }
+
+  if ((Cap & 0x0F) >= 2) {
+    DevCap2 = Rd (E, P + 0x24, 4);
+    DevCtl2 = Rd (E, P + 0x28, 2);
+    LnkCap2 = Rd (E, P + 0x2C, 4);
+    LnkCtl2 = Rd (E, P + 0x30, 2);
+    DocAdd (
+      Doc,
+      ATTR_NORMAL,
+      L"    DevCap2 %08X  LTR %s, DevCtl2 %04X: LTR %s",
+      DevCap2,
+      (DevCap2 & BIT11) ? L"supported" : L"no",
+      DevCtl2,
+      (DevCtl2 & BIT10) ? L"enabled" : L"off"
+      );
+    if ((Type != 9) && (Type != 0x0A) && (LnkCap2 != 0)) {
+      Pos       = 0;
+      Speeds[0] = L'\0';
+      for (Bit = 1; Bit <= 6; Bit++) {
+        if (LnkCap2 & (1u << Bit)) {
+          Pos += UnicodeSPrint (Speeds + Pos, sizeof (Speeds) - Pos * sizeof (CHAR16), L" %s", SpeedName (Bit));
+        }
+      }
+
+      DocAdd (Doc, ATTR_NORMAL, L"    LnkCap2 %08X  speeds:%s", LnkCap2, Speeds);
+      DocAdd (Doc, ATTR_NORMAL, L"    LnkCtl2 %04X      target %s", LnkCtl2, SpeedName (LnkCtl2 & 0x0F));
+    }
+  }
+}
+
+STATIC
+VOID
+DecodeCap (
+  IN TEXT_DOC       *Doc,
+  IN PCI_DEV_ENTRY  *E,
+  IN UINT8          Id,
+  IN UINT32         P
+  )
+{
+  UINT32  V;
+  UINT32  Ctl;
+  STATIC CONST CHAR16  *DStates[] = { L"D0", L"D1", L"D2", L"D3hot" };
+
+  switch (Id) {
+    case 0x01:
+      V   = Rd (E, P + 2, 2);
+      Ctl = Rd (E, P + 4, 2);
+      DocAdd (
+        Doc,
+        ATTR_NORMAL,
+        L"    PMC %04X: version %d%s%s, PME from %s%s%s%s%s%s",
+        V,
+        V & 7,
+        (V & BIT9) ? L", D1" : L"",
+        (V & BIT10) ? L", D2" : L"",
+        (V & BIT11) ? L"D0 " : L"",
+        (V & BIT12) ? L"D1 " : L"",
+        (V & BIT13) ? L"D2 " : L"",
+        (V & BIT14) ? L"D3hot " : L"",
+        (V & BIT15) ? L"D3cold" : L"",
+        (V & 0xF800) ? L"" : L"none"
+        );
+      DocAdd (
+        Doc,
+        ATTR_HEADER,
+        L"    PMCSR %04X: state %s%s%s%s",
+        Ctl,
+        DStates[Ctl & 3],
+        (Ctl & BIT3) ? L", NoSoftReset" : L"",
+        (Ctl & BIT8) ? L", PME enabled" : L"",
+        (Ctl & BIT15) ? L", PME status" : L""
+        );
+      break;
+    case 0x05:
+      Ctl = Rd (E, P + 2, 2);
+      DocAdd (
+        Doc,
+        (Ctl & BIT0) ? ATTR_HEADER : ATTR_NORMAL,
+        L"    Control %04X: %s, %d of %d vectors, %s%s",
+        Ctl,
+        (Ctl & BIT0) ? L"ENABLED" : L"disabled",
+        1 << ((Ctl >> 4) & 7),
+        1 << ((Ctl >> 1) & 7),
+        (Ctl & BIT7) ? L"64-bit" : L"32-bit",
+        (Ctl & BIT8) ? L", per-vector mask" : L""
+        );
+      if (Ctl & BIT7) {
+        DocAdd (Doc, ATTR_NORMAL, L"    Address %08X%08X  Data %04X", Rd (E, P + 8, 4), Rd (E, P + 4, 4), Rd (E, P + 0x0C, 2));
+      } else {
+        DocAdd (Doc, ATTR_NORMAL, L"    Address %08X  Data %04X", Rd (E, P + 4, 4), Rd (E, P + 8, 2));
+      }
+
+      break;
+    case 0x11:
+      Ctl = Rd (E, P + 2, 2);
+      V   = Rd (E, P + 4, 4);
+      DocAdd (
+        Doc,
+        (Ctl & BIT15) ? ATTR_HEADER : ATTR_NORMAL,
+        L"    Control %04X: %s, %d vectors%s",
+        Ctl,
+        (Ctl & BIT15) ? L"ENABLED" : L"disabled",
+        (Ctl & 0x7FF) + 1,
+        (Ctl & BIT14) ? L", function masked" : L""
+        );
+      DocAdd (Doc, ATTR_NORMAL, L"    Table BAR%d + %Xh", V & 7, V & ~7u);
+      V = Rd (E, P + 8, 4);
+      DocAdd (Doc, ATTR_NORMAL, L"    PBA   BAR%d + %Xh", V & 7, V & ~7u);
+      break;
+    case 0x10:
+      DecodePcie (Doc, E, P);
+      break;
+    case 0x09:
+      DocAdd (Doc, ATTR_NORMAL, L"    Length %d bytes", Rd (E, P + 2, 1));
+      break;
+    case 0x0D:
+      V = Rd (E, P + 4, 4);
+      DocAdd (Doc, ATTR_NORMAL, L"    Subsystem %04X:%04X", V & 0xFFFF, V >> 16);
+      break;
+    default:
+      DocAdd (Doc, ATTR_DIM, L"    %08X %08X", Rd (E, P, 4), Rd (E, P + 4, 4));
+      break;
+  }
+}
+
+STATIC
+VOID
+DecodeExtCap (
+  IN TEXT_DOC       *Doc,
+  IN PCI_DEV_ENTRY  *E,
+  IN UINT16         Id,
+  IN UINT32         P
+  )
+{
+  UINT32  V;
+  UINT32  Ctl;
+  UINTN   Count;
+  UINTN   Index;
+  UINTN   Bit;
+  CHAR16  Sizes[160];
+  UINTN   Pos;
+
+  switch (Id) {
+    case 0x0001:
+      AddBits (Doc, L"Uncorrectable status", Rd (E, P + 4, 4), mUeNames, 32);
+      AddBits (Doc, L"Uncorrectable mask", Rd (E, P + 8, 4), NULL, 0);
+      AddBits (Doc, L"Uncorrectable severity", Rd (E, P + 0x0C, 4), NULL, 0);
+      AddBits (Doc, L"Correctable status", Rd (E, P + 0x10, 4), mCeNames, 16);
+      AddBits (Doc, L"Correctable mask", Rd (E, P + 0x14, 4), NULL, 0);
+      AddBits (Doc, L"Cap & control", Rd (E, P + 0x18, 4), NULL, 0);
+      break;
+    case 0x0003:
+      DocAdd (Doc, ATTR_HEADER, L"    Serial number %08X%08X", Rd (E, P + 8, 4), Rd (E, P + 4, 4));
+      break;
+    case 0x000B:
+      V = Rd (E, P + 4, 4);
+      DocAdd (Doc, ATTR_NORMAL, L"    VSEC ID %04X rev %d, length %d", V & 0xFFFF, (V >> 16) & 0xF, V >> 20);
+      break;
+    case 0x0023:
+      V = Rd (E, P + 4, 4);
+      DocAdd (Doc, ATTR_NORMAL, L"    DVSEC vendor %04X rev %d, length %d, ID %04X", V & 0xFFFF, (V >> 16) & 0xF, V >> 20, Rd (E, P + 8, 2));
+      break;
+    case 0x0010:
+      Ctl = Rd (E, P + 8, 2);
+      DocAdd (
+        Doc,
+        (Ctl & BIT0) ? ATTR_HEADER : ATTR_NORMAL,
+        L"    VF %s, NumVFs %d of %d (initial %d), offset %d stride %d, VF device %04X",
+        (Ctl & BIT0) ? L"ENABLED" : L"disabled",
+        Rd (E, P + 0x10, 2),
+        Rd (E, P + 0x0E, 2),
+        Rd (E, P + 0x0C, 2),
+        Rd (E, P + 0x14, 2),
+        Rd (E, P + 0x16, 2),
+        Rd (E, P + 0x1A, 2)
+        );
+      break;
+    case 0x0015:
+    case 0x0024:
+      Count = (Rd (E, P + 8, 4) >> 5) & 7;
+      for (Index = 0; (Index < Count) && (Index < 6); Index++) {
+        V   = Rd (E, P + 4 + (UINT32)Index * 8, 4);
+        Ctl = Rd (E, P + 8 + (UINT32)Index * 8, 4);
+        Pos = 0;
+        Sizes[0] = L'\0';
+        for (Bit = 4; Bit < 32; Bit++) {
+          if ((V & (1u << Bit)) && (Pos < 140)) {
+            Pos += UnicodeSPrint (Sizes + Pos, sizeof (Sizes) - Pos * sizeof (CHAR16), (Bit - 4 >= 10) ? L" %dG" : L" %dM", (Bit - 4 >= 10) ? (1u << (Bit - 14)) : (1u << (Bit - 4)));
+          }
+        }
+
+        DocAdd (
+          Doc,
+          ATTR_NORMAL,
+          L"    BAR%d current %d MB, supported:%s",
+          Ctl & 7,
+          1u << ((Ctl >> 8) & 0x3F),
+          Sizes
+          );
+      }
+
+      break;
+    case 0x0018:
+      V = Rd (E, P + 4, 4);
+      DocAdd (
+        Doc,
+        ATTR_NORMAL,
+        L"    Max snoop latency %d x 32^%d ns, max no-snoop %d x 32^%d ns",
+        V & 0x3FF,
+        (V >> 10) & 7,
+        (V >> 16) & 0x3FF,
+        (V >> 26) & 7
+        );
+      break;
+    case 0x001E:
+      V   = Rd (E, P + 4, 4);
+      Ctl = Rd (E, P + 8, 4);
+      DocAdd (
+        Doc,
+        ATTR_NORMAL,
+        L"    Supported:%s%s%s%s   Enabled:%s%s%s%s%s",
+        (V & BIT0) ? L" PCI-PM_L1.2" : L"",
+        (V & BIT1) ? L" PCI-PM_L1.1" : L"",
+        (V & BIT2) ? L" ASPM_L1.2" : L"",
+        (V & BIT3) ? L" ASPM_L1.1" : L"",
+        (Ctl & BIT0) ? L" PCI-PM_L1.2" : L"",
+        (Ctl & BIT1) ? L" PCI-PM_L1.1" : L"",
+        (Ctl & BIT2) ? L" ASPM_L1.2" : L"",
+        (Ctl & BIT3) ? L" ASPM_L1.1" : L"",
+        (Ctl & 0x0F) ? L"" : L" none"
+        );
+      break;
+    case 0x000E:
+      V = Rd (E, P + 4, 2);
+      DocAdd (Doc, ATTR_NORMAL, L"    Next function number %d", (V >> 8) & 0xFF);
+      break;
+    case 0x0019:
+      AddBits (Doc, L"Lane error status", Rd (E, P + 8, 4), NULL, 0);
+      break;
+    default:
+      DocAdd (Doc, ATTR_DIM, L"    %08X %08X %08X", Rd (E, P + 4, 4), Rd (E, P + 8, 4), Rd (E, P + 0x0C, 4));
+      break;
+  }
+}
+
+STATIC
+VOID
+AddBars (
+  IN TEXT_DOC       *Doc,
+  IN PCI_DEV_ENTRY  *E,
+  IN UINTN          Count
+  )
+{
+  UINTN   Index;
+  UINT32  Lo;
+  UINT32  Hi;
+
+  for (Index = 0; Index < Count; Index++) {
+    Lo = Rd (E, 0x10 + (UINT32)Index * 4, 4);
+    if (Lo == 0) {
+      DocAdd (Doc, ATTR_DIM, L"  BAR%d  unused", Index);
+      continue;
+    }
+
+    if (Lo & BIT0) {
+      DocAdd (Doc, ATTR_NORMAL, L"  BAR%d  IO     %04X", Index, Lo & ~3u);
+    } else if (((Lo >> 1) & 3) == 2) {
+      Hi = (Index + 1 < Count) ? Rd (E, 0x10 + (UINT32)(Index + 1) * 4, 4) : 0;
+      DocAdd (Doc, ATTR_NORMAL, L"  BAR%d  MEM64  %08X%08X%s", Index, Hi, Lo & ~0xFu, (Lo & BIT3) ? L"  prefetchable" : L"");
+      Index++;
+    } else {
+      DocAdd (Doc, ATTR_NORMAL, L"  BAR%d  MEM32  %08X%s", Index, Lo & ~0xFu, (Lo & BIT3) ? L"  prefetchable" : L"");
+    }
+  }
+}
+
+STATIC
+VOID
+ShowPciInfo (
+  IN PCI_DEV_ENTRY  *E
+  )
+{
+  TEXT_DOC  Doc;
+  CHAR16    Header[100];
+  UINT32    Cmd;
+  UINT32    Sts;
+  UINT32    V;
+  UINT8     Ptr;
+  UINT8     Id;
+  UINTN     Guard;
+  UINT32    Ext;
+  UINT32    ExtPtr;
+  UINT16    ExtId;
+  UINTN     Type;
+
+  DocInit (&Doc);
+  Type = E->HeaderType & 0x7F;
+  Cmd  = Rd (E, 4, 2);
+  Sts  = Rd (E, 6, 2);
+  DocAdd (&Doc, ATTR_HEADER, L"Header");
+  DocAdd (&Doc, ATTR_NORMAL, L"  Vendor:Device  %04X:%04X   Revision %02X   Class %02X%02X%02X %s", E->VendorId, E->DeviceId, Rd (E, 8, 1), E->BaseClass, E->SubClass, E->ProgIf, ClassName (E->BaseClass, E->SubClass));
+  DocAdd (&Doc, ATTR_NORMAL, L"  Header type    %02X (%s%s)", E->HeaderType, (Type == 0) ? L"device" : ((Type == 1) ? L"PCI bridge" : L"CardBus bridge"), (E->HeaderType & 0x80) ? L", multi-function" : L"");
+  DocAdd (
+    &Doc,
+    ATTR_NORMAL,
+    L"  Command %04X:  %s%s%s%s%s%s",
+    Cmd,
+    (Cmd & BIT0) ? L"IO " : L"",
+    (Cmd & BIT1) ? L"MEM " : L"",
+    (Cmd & BIT2) ? L"BusMaster " : L"",
+    (Cmd & BIT6) ? L"ParityErr " : L"",
+    (Cmd & BIT8) ? L"SERR " : L"",
+    (Cmd & BIT10) ? L"INTxDisable" : L""
+    );
+  DocAdd (
+    &Doc,
+    (Sts & 0xF900) ? ATTR_CHANGED : ATTR_NORMAL,
+    L"  Status  %04X:  %s%s%s%s%s%s%s",
+    Sts,
+    (Sts & BIT3) ? L"INTx " : L"",
+    (Sts & BIT4) ? L"CapList " : L"",
+    (Sts & BIT8) ? L"MasterDataParity " : L"",
+    (Sts & BIT11) ? L"SigTargetAbort " : L"",
+    (Sts & BIT12) ? L"RcvTargetAbort " : L"",
+    (Sts & BIT13) ? L"RcvMasterAbort " : L"",
+    (Sts & (BIT14 | BIT15)) ? L"SERR/ParityErr" : L""
+    );
+  V = Rd (E, 0x3C, 2);
+  DocAdd (&Doc, ATTR_NORMAL, L"  Interrupt      line %02X, pin %s", V & 0xFF, ((V >> 8) >= 1 && (V >> 8) <= 4) ? mPins[(V >> 8) - 1] : L"none");
+  if (Type == 0) {
+    V = Rd (E, 0x2C, 4);
+    DocAdd (&Doc, ATTR_NORMAL, L"  Subsystem      %04X:%04X", V & 0xFFFF, V >> 16);
+  }
+
+  DocAdd (&Doc, ATTR_NORMAL, L"");
+  DocAdd (&Doc, ATTR_HEADER, L"Base Address Registers");
+  AddBars (&Doc, E, (Type == 0) ? 6 : ((Type == 1) ? 2 : 1));
+  if (Type == 1) {
+    DocAdd (&Doc, ATTR_NORMAL, L"");
+    DocAdd (&Doc, ATTR_HEADER, L"Bridge");
+    DocAdd (&Doc, ATTR_NORMAL, L"  Bus  primary %02X  secondary %02X  subordinate %02X", Rd (E, 0x18, 1), Rd (E, 0x19, 1), Rd (E, 0x1A, 1));
+    V = Rd (E, 0x1C, 2);
+    DocAdd (&Doc, ATTR_NORMAL, L"  IO window       %04X - %04X", (V & 0xF0) << 8, ((V >> 8) & 0xF0) << 8 | 0xFFF);
+    V = Rd (E, 0x20, 4);
+    DocAdd (&Doc, ATTR_NORMAL, L"  Memory window   %08X - %08X", (V & 0xFFF0) << 16, (V & 0xFFF00000) | 0xFFFFF);
+    V = Rd (E, 0x24, 4);
+    DocAdd (&Doc, ATTR_NORMAL, L"  Prefetch window %08X%08X - %08X%08X", Rd (E, 0x28, 4), (V & 0xFFF0) << 16, Rd (E, 0x2C, 4), (V & 0xFFF00000) | 0xFFFFF);
+    V = Rd (E, 0x3E, 2);
+    DocAdd (&Doc, ATTR_NORMAL, L"  Bridge control  %04X%s%s", V, (V & BIT3) ? L"  VGA" : L"", (V & BIT6) ? L"  SECONDARY BUS RESET" : L"");
+  }
+
+  DocAdd (&Doc, ATTR_NORMAL, L"");
+  DocAdd (&Doc, ATTR_HEADER, L"Capabilities");
+  if ((Sts & BIT4) == 0) {
+    DocAdd (&Doc, ATTR_DIM, L"  (none)");
+  } else {
+    Ptr = (UINT8)Rd (E, (Type == 2) ? 0x14 : 0x34, 1) & 0xFC;
+    for (Guard = 0; (Ptr >= 0x40) && (Guard < 48); Guard++) {
+      V  = Rd (E, Ptr, 2);
+      Id = (UINT8)V;
+      DocAdd (&Doc, EFI_TEXT_ATTR (EFI_WHITE, EFI_BLUE), L"  [%02X] %02X  %s", Ptr, Id, ((Id < ARRAY_SIZE (mCapNames)) && (mCapNames[Id] != NULL)) ? mCapNames[Id] : L"Unknown");
+      DecodeCap (&Doc, E, Id, Ptr);
+      Ptr = (UINT8)(V >> 8) & 0xFC;
+    }
+  }
+
+  Ext = Rd (E, 0x100, 4);
+  if ((Ext != 0xFFFFFFFF) && (Ext != 0) && (E->PcieType != 0xFF)) {
+    DocAdd (&Doc, ATTR_NORMAL, L"");
+    DocAdd (&Doc, ATTR_HEADER, L"Extended Capabilities");
+    ExtPtr = 0x100;
+    for (Guard = 0; (ExtPtr >= 0x100) && (ExtPtr < 0x1000) && (Guard < 64); Guard++) {
+      Ext   = Rd (E, ExtPtr, 4);
+      if ((Ext == 0) || (Ext == 0xFFFFFFFF)) {
+        break;
+      }
+
+      ExtId = (UINT16)Ext;
+      DocAdd (&Doc, EFI_TEXT_ATTR (EFI_WHITE, EFI_BLUE), L"  [%03X] %04X v%d  %s", ExtPtr, ExtId, (Ext >> 16) & 0xF, ((ExtId < ARRAY_SIZE (mExtCapNames)) && (mExtCapNames[ExtId] != NULL)) ? mExtCapNames[ExtId] : L"Unknown");
+      DecodeExtCap (&Doc, E, ExtId, ExtPtr);
+      ExtPtr = (Ext >> 20) & 0xFFC;
+    }
+  }
+
+  UnicodeSPrint (Header, sizeof (Header), L"PCI %04X:%02X:%02X.%X  %04X:%04X  %s", E->Segment, E->Bus, E->Dev, E->Func, E->VendorId, E->DeviceId, ClassName (E->BaseClass, E->SubClass));
+  DocView (L"PCI Device Info", Header, &Doc);
+  DocFree (&Doc);
+}
+
 /**
   @retval TRUE   switch back to the list (F6)
   @retval FALSE  leave the PCI screen (Esc)
@@ -557,6 +1158,7 @@ PciTreeRun (
   TEXT_DOC  Doc;
   UINTN     Sel;
   INTN      Pick;
+  INTN      Tag;
   CHAR16    Header[64];
 
   Sel = 0;
@@ -565,11 +1167,12 @@ PciTreeRun (
     UnicodeSPrint (Header, sizeof (Header), L"%d device(s), %d root bridge(s)", mDevCount, mRootCount);
     Pick = DocSelect (
              L"PCI Tree",
-             L"Up/Down/PgUp/PgDn: select   Enter: config space   F5: rescan   F6: list view   Esc: back",
+             L"Up/Down/PgUp/PgDn: select   Enter: config space   F4: device info   F5: rescan   F6: list view   Esc: back",
              Header,
              &Doc,
              &Sel
              );
+    Tag = ((Pick == -4) && (Sel < Doc.Count)) ? Doc.Lines[Sel].Tag : -1;
     DocFree (&Doc);
     if (Pick == -1) {
       return FALSE;
@@ -582,6 +1185,14 @@ PciTreeRun (
     if (Pick == -2) {
       ScanPci ();
       Sel = 0;
+      continue;
+    }
+
+    if (Pick == -4) {
+      if (Tag >= 0) {
+        ShowPciInfo (&mDevs[Tag]);
+      }
+
       continue;
     }
 
@@ -611,7 +1222,7 @@ PciViewRun (
   for ( ; ;) {
     Visible = gScreenRows - 6;
     if (Redraw) {
-      UiFrame (L"PCI Devices", L"Up/Down/PgUp/PgDn: select   Enter: config space   F5: rescan   F6: tree view   Esc: back");
+      UiFrame (L"PCI Devices", L"Up/Down/PgUp/PgDn: select   Enter: config space   F4: device info   F5: rescan   F6: tree view   Esc: back");
       UiPrintAt (1, 1, ATTR_HEADER, L"%d device(s) found", mDevCount);
       UiPrintAt (1, 2, ATTR_HEADER, L" Seg  Bus Dev Fn  Vendor Device  Class     Type");
       Redraw = FALSE;
@@ -689,6 +1300,13 @@ PciViewRun (
         Sel    = 0;
         Top    = 0;
         Redraw = TRUE;
+        break;
+      case SCAN_F4:
+        if (mDevCount > 0) {
+          ShowPciInfo (&mDevs[Sel]);
+          Redraw = TRUE;
+        }
+
         break;
       case SCAN_F6:
         if (!PciTreeRun ()) {

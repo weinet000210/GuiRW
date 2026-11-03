@@ -107,6 +107,33 @@ DocAddItem (
   DocAppend (Doc, ATTR_NORMAL, Tag, Buf);
 }
 
+VOID
+EFIAPI
+DocAddItemAttr (
+  IN OUT TEXT_DOC  *Doc,
+  IN INTN          Tag,
+  IN UINTN         Attr,
+  IN CONST CHAR16  *Fmt,
+  ...
+  )
+{
+  VA_LIST  Args;
+  CHAR16   Buf[DOC_LINE_MAX];
+
+  VA_START (Args, Fmt);
+  UnicodeVSPrint (Buf, sizeof (Buf), Fmt, Args);
+  VA_END (Args);
+  DocAppend (Doc, Attr, Tag, Buf);
+}
+
+//
+// DocSelect options: a non-zero timeout makes it return -5 when no key
+// arrives in time; KeepTop keeps the scroll position across calls.
+//
+UINTN    gDocTimeoutMs = 0;
+BOOLEAN  gDocKeepTop   = FALSE;
+STATIC UINTN  mLastTop;
+
 /**
   Hex + ASCII dump, 16 bytes per line, offsets relative to Base.
 **/
@@ -277,6 +304,7 @@ NextSelectable (
   @retval -1    Esc
   @retval -2    F5 (caller should rebuild the document)
   @retval -3    F6 (caller-defined, e.g. switch view)
+  @retval -4    F4 (caller-defined; *Sel is the highlighted line)
 **/
 INTN
 DocSelect (
@@ -300,7 +328,7 @@ DocSelect (
     Cur = NextSelectable (Doc, 0, 1);
   }
 
-  Top = 0;
+  Top = gDocKeepTop ? mLastTop : 0;
   UiFrame (Title, Help);
   for ( ; ;) {
     Visible = gScreenRows - 4;
@@ -331,7 +359,12 @@ DocSelect (
     }
 
     UiStatus (ATTR_DIM, L"");
-    UiReadKey (&Key);
+    mLastTop = Top;
+    if (!UiReadKeyTimeout (&Key, gDocTimeoutMs)) {
+      *Sel = (Cur >= 0) ? (UINTN)Cur : 0;
+      return -5;
+    }
+
     if (Key.UnicodeChar == CHAR_CARRIAGE_RETURN) {
       if (Cur >= 0) {
         *Sel = (UINTN)Cur;
@@ -352,6 +385,10 @@ DocSelect (
 
       if (Key.ScanCode == SCAN_F6) {
         return -3;
+      }
+
+      if (Key.ScanCode == SCAN_F4) {
+        return -4;
       }
 
       continue;
@@ -409,6 +446,9 @@ DocSelect (
       case SCAN_F6:
         *Sel = (UINTN)Cur;
         return -3;
+      case SCAN_F4:
+        *Sel = (UINTN)Cur;
+        return -4;
       case SCAN_ESC:
         *Sel = (UINTN)Cur;
         return -1;

@@ -16,7 +16,7 @@
 #include <Library/PrintLib.h>
 #include <Library/IoLib.h>
 
-#define UEFIRRW_VERSION  L"0.4.0"
+#define UEFIRRW_VERSION  L"0.5.0"
 
 //
 // Colors
@@ -35,6 +35,42 @@
 //
 extern UINTN  gScreenCols;
 extern UINTN  gScreenRows;
+
+//
+// Menu bar entries (F10). gUiJump is set when the user picks one; every
+// screen then sees Esc and returns, and the dispatcher opens the pick.
+//
+#define UI_MOD_PCI     0
+#define UI_MOD_MEM     1
+#define UI_MOD_IO      2
+#define UI_MOD_MSR     3
+#define UI_MOD_ACPI    4
+#define UI_MOD_SMBIOS  5
+#define UI_MOD_USB     6
+#define UI_MOD_COM     7
+#define UI_MOD_HELP    8
+#define UI_MOD_ABOUT   9
+#define UI_MOD_FONT    10
+#define UI_MOD_EXIT    11
+
+extern INTN  gUiJump;
+extern INTN  gUiCurrent;
+
+VOID
+UiDrawMenuBar (
+  IN INTN  Sel
+  );
+
+INTN
+UiTopMenu (
+  VOID
+  );
+
+BOOLEAN
+UiReadKeyTimeout (
+  OUT EFI_INPUT_KEY  *Key,
+  IN  UINTN          TimeoutMs
+  );
 
 VOID
 UiInit (
@@ -237,6 +273,19 @@ DocAddItem (
   );
 
 VOID
+EFIAPI
+DocAddItemAttr (
+  IN OUT TEXT_DOC  *Doc,
+  IN INTN          Tag,
+  IN UINTN         Attr,
+  IN CONST CHAR16  *Fmt,
+  ...
+  );
+
+extern UINTN    gDocTimeoutMs;
+extern BOOLEAN  gDocKeepTop;
+
+VOID
 DocAddHex (
   IN OUT TEXT_DOC  *Doc,
   IN CONST UINT8   *Data,
@@ -272,6 +321,11 @@ UsbViewRun (
 
 VOID
 ComViewRun (
+  VOID
+  );
+
+VOID
+AcpiViewRun (
   VOID
   );
 

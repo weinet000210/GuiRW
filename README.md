@@ -2,7 +2,7 @@
 
 uefirrw BIOS tool under UEFI — a text-mode, RW-Everything style hardware read/write utility that runs in the UEFI Shell (or boots directly as `BOOTX64.EFI`). No OS needed.
 
-![Main menu](docs/images/main-menu.png)
+![Menu bar](docs/images/menu-bar.png)
 
 ## About this project
 
@@ -26,23 +26,27 @@ Recommendations:
 - Try it on a test or development machine first, not on production systems.
 - Note the original value before writing, so you can restore it.
 - Have a way to recover the BIOS (backup image, SPI programmer, or dual BIOS).
-- Reading is generally safe; every PCI and IO write asks for confirmation.
+- Reading is generally safe. **Writes are applied immediately when you press Enter, with no confirmation** (including IO CF9h, which resets the machine).
 
-## Features (v0.4)
+## Features (v0.5)
+
+Navigation works like RU: the tool opens on the PCI list, and `F10` (or `Esc` out of a screen) opens the menu bar `PCI  Memory  IO  MSR  ACPI  SMBIOS  USB  COM  Help`. Left/Right to choose, Enter to open. **Help** holds About (version, build date, author, download link), Font Size and Exit.
+
 
 | Module | What it does |
 |---|---|
-| **PCI** | Scans every PCI root bridge (segment aware), lists Seg/Bus/Dev/Fn, vendor/device ID, class code and type. Enter opens the config space editor (256 B, or 4 KB extended space when reachable). `F6` switches to a PCIe tree: root bridge -> root port -> switch -> endpoint, with bridge bus ranges, PCIe port type and current/max link speed and width. |
+| **PCI** | Scans every PCI root bridge (segment aware), lists Seg/Bus/Dev/Fn, vendor/device ID, class code and type. Enter opens the config space editor (256 B, or 4 KB extended space when reachable). `F4` shows device info: header, BARs, bridge windows, and every capability and extended capability decoded (PM, MSI, MSI-X, PCI Express incl. link/slot/LnkCap2, AER with error names, Device Serial Number, SR-IOV, Resizable BAR, LTR, L1 PM Substates, ARI, VSEC/DVSEC, ...). `F6` switches to a PCIe tree: root bridge -> root port -> switch -> endpoint, with bridge bus ranges, PCIe port type and current/max link speed and width. |
 | **Memory / MMIO** | Hex view/edit of any physical address (byte/word/dword access via MMIO reads). |
 | **IO Space** | Hex view/edit of x86 IO ports 0000-FFFF in byte/word/dword width. |
-| **MSR** | Boot-processor MSR list with common architectural MSRs, 64-bit bit view, add any MSR, write with confirmation. A temporary #GP handler skips faulting RDMSR/WRMSR so unsupported MSRs report an error instead of hanging. |
+| **MSR** | Boot-processor MSR list with common architectural MSRs, 64-bit bit view, add any MSR, write (`W`). A temporary #GP handler skips faulting RDMSR/WRMSR so unsupported MSRs report an error instead of hanging. |
 | **SMBIOS** | Finds the SMBIOS 3.x (or 2.x) entry point, lists every structure (type, handle, length, name). Enter shows decoded fields (types 0, 1, 2, 3, 4, 7, 8, 9, 11, 12, 13, 16, 17, 19, 32, 41), the string set, and a raw dump. |
-| **USB Devices** | Tree of host controllers (xHCI/EHCI/OHCI/UHCI with PCI location), root hub ports, hubs and devices with VID:PID, product string, class and speed. Enter on a device shows connection info, the device descriptor, the full configuration set (interfaces, endpoints, HID, IAD, SuperSpeed companion), hub port status and raw descriptors; Enter on a controller shows its root port status. Read-only. |
+| **USB Devices** | Tree of host controllers (xHCI/EHCI/OHCI/UHCI with PCI location), root hub ports, hubs and devices with VID:PID, product string, class and speed. Enter on a device shows connection info, the device descriptor, the full configuration set (interfaces, endpoints, HID, IAD, SuperSpeed companion), hub port status and raw descriptors; Enter on a controller shows its root port status. `F6` turns on auto refresh every 5 s for hot-plug testing: newly attached devices show green `[new]` and removed devices stay in place in red `[removed]` for 20 s. Read-only. |
+| **ACPI Tables** | RSDP, XSDT/RSDT and every table (plus DSDT and FACS from the FADT) with OEM IDs, length, address and checksum check. Enter decodes the header and FADT, MADT (CPU count), MCFG (ECAM), HPET and DMAR (VT-d), then shows the raw bytes. |
 | **COM Port Test** | Detects 16550 UARTs at 3F8h, 2F8h, 3E8h, 2E8h (or any IO base) and opens a polled terminal: upper window ASCII, lower window hex, sent bytes yellow and received white. Type to send, `Tab` for raw hex input, `F2` baud (9600-115200, 8N1), `F4` internal loopback self-test, `F5` hide sent bytes, `F6` Enter as CR / CR+LF / LF. Shows LSR/MSR, modem lines and overrun/framing/parity counts. The firmware's serial console on that port is paused while testing and restored on exit. |
 
 Hex editor keys: arrows move, PgUp/PgDn change page, `W` cycles Byte/Word/DWord, `G` goes to an address, `F5` re-reads, type hex digits to edit (Enter or a full value commits; every write is read back and verified), `Esc` goes back.
 
-PCI and IO writes always ask for confirmation.
+Writes take effect as soon as you press Enter; there is no confirmation prompt.
 
 | PCI devices | PCI config space |
 |---|---|
@@ -52,7 +56,7 @@ PCI and IO writes always ask for confirmation.
 |---|---|
 | ![IO](docs/images/io-space.png) | ![MSR](docs/images/msr.png) |
 
-Display: when the firmware exposes GOP, uefirrw draws its own 8x19 text (the edk2 font) at the panel's native resolution, with an integer font scale picked automatically so the grid fills the screen with at least 100x25 cells (e.g. 1920x1080 -> 120x28 at x2, 1024x768 -> 128x40 at x1). `F2` on the main menu cycles the font scale; the title bar shows resolution, grid and scale. Only changed cells are redrawn, so cursor movement stays fast even with serial console redirection enabled. Without GOP it falls back to the firmware text console.
+Display: when the firmware exposes GOP, uefirrw draws its own 8x19 text (the edk2 font) at the panel's native resolution, with an integer font scale picked automatically so the grid fills the screen with at least 100x25 cells (e.g. 1920x1080 -> 120x28 at x2, 1024x768 -> 128x40 at x1). Help > Font Size cycles the font scale; Help > About shows the resolution, grid and scale. Only changed cells are redrawn, so cursor movement stays fast even with serial console redirection enabled. Without GOP it falls back to the firmware text console.
 
 | SMBIOS | USB tree |
 |---|---|
@@ -61,6 +65,14 @@ Display: when the firmware exposes GOP, uefirrw draws its own 8x19 text (the edk
 | PCIe tree | COM port test |
 |---|---|
 | ![PCIe tree](docs/images/pcie-tree.png) | ![COM port test](docs/images/com-test.png) |
+
+| PCI device info | ACPI tables |
+|---|---|
+| ![PCI device info](docs/images/pci-info.png) | ![ACPI](docs/images/acpi-list.png) |
+
+| USB hot-plug (auto refresh) | About |
+|---|---|
+| ![USB hot-plug](docs/images/usb-hotplug.png) | ![About](docs/images/about.png) |
 
 ## Build
 
@@ -85,7 +97,7 @@ On non-x86 hosts install `gcc-x86-64-linux-gnu`; the script picks the cross pref
 
 ## Roadmap
 
-ACPI tables, CPUID, full PCIe capability decode, PCIe MMIO UARTs, EC / SMBus / SPD, multi-core MSR.
+Dump everything to a text file, CMOS, Index/Data IO and Super I/O, CPUID, PCIe MMIO UARTs, EC / SMBus / SPD, multi-core MSR.
 
 ## Tested on
 

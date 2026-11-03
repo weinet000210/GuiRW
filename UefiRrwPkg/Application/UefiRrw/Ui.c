@@ -597,6 +597,152 @@ UiPrintAt (
 /**
   Draw the title bar (row 0) and help bar (last row), clear the body.
 **/
+//
+// ---- Menu bar (F10) ---------------------------------------------------------------
+//
+
+INTN   gUiJump    = -1;
+INTN   gUiCurrent = UI_MOD_PCI;
+
+STATIC CONST CHAR16  *mBarItems[] = {
+  L"PCI", L"Memory", L"IO", L"MSR", L"ACPI", L"SMBIOS", L"USB", L"COM", L"Help"
+};
+
+STATIC CONST CHAR16  *mHelpItems[] = { L"About", L"Font Size", L"Exit" };
+
+STATIC
+UINTN
+BarCol (
+  IN UINTN  Item
+  )
+{
+  UINTN  Col;
+  UINTN  Index;
+
+  Col = 1;
+  for (Index = 0; Index < Item; Index++) {
+    Col += StrLen (mBarItems[Index]) + 2;
+  }
+
+  return Col;
+}
+
+/**
+  Draw row 0. Sel >= 0 highlights that entry (menu active); otherwise the
+  current module is shown in white.
+**/
+VOID
+UiDrawMenuBar (
+  IN INTN  Sel
+  )
+{
+  UINTN  Index;
+  UINTN  Attr;
+
+  UiFillLine (0, ATTR_TITLE);
+  for (Index = 0; Index < ARRAY_SIZE (mBarItems); Index++) {
+    if ((INTN)Index == Sel) {
+      Attr = ATTR_HILITE;
+    } else if ((Sel < 0) && ((INTN)Index == gUiCurrent)) {
+      Attr = EFI_TEXT_ATTR (EFI_WHITE, EFI_DARKGRAY);
+    } else {
+      Attr = ATTR_TITLE;
+    }
+
+    UiPrintAt (BarCol (Index), 0, Attr, L" %s ", mBarItems[Index]);
+  }
+}
+
+/**
+  Interactive menu bar over whatever is on screen. The screen is restored
+  when the menu closes.
+
+  @return UI_MOD_* chosen, or -1 when cancelled
+**/
+INTN
+UiTopMenu (
+  VOID
+  )
+{
+  UI_CELL        *Saved;
+  UINTN          Size;
+  INTN           Sel;
+  INTN           Sub;
+  INTN           Result;
+  UINTN          Index;
+  UINTN          Col;
+  EFI_INPUT_KEY  Key;
+  BOOLEAN        Open;
+
+  Size  = gScreenCols * gScreenRows * sizeof (UI_CELL);
+  Saved = AllocateCopyPool (Size, mCells);
+  Sel   = ((gUiCurrent >= 0) && (gUiCurrent < (INTN)ARRAY_SIZE (mBarItems))) ? gUiCurrent : 0;
+  Sub   = 0;
+  Open  = FALSE;
+  Result = -1;
+  for ( ; ;) {
+    if (Saved != NULL) {
+      CopyMem (mCells, Saved, Size);
+    }
+
+    UiDrawMenuBar (Sel);
+    if (Open) {
+      Col = BarCol ((UINTN)Sel);
+      for (Index = 0; Index < ARRAY_SIZE (mHelpItems); Index++) {
+        UiPrintAt (Col, 1 + Index, ((INTN)Index == Sub) ? ATTR_HILITE : ATTR_TITLE, L" %-12s ", mHelpItems[Index]);
+      }
+    }
+
+    UiStatus (ATTR_DIM, L"Left/Right: choose   Enter: open   Esc: close menu");
+    UiFlush ();
+    gBS->WaitForEvent (1, &gST->ConIn->WaitForKey, &Index);
+    if (EFI_ERROR (gST->ConIn->ReadKeyStroke (gST->ConIn, &Key))) {
+      continue;
+    }
+
+    if ((Key.ScanCode == SCAN_ESC) || (Key.ScanCode == SCAN_F10)) {
+      if (Open) {
+        Open = FALSE;
+        continue;
+      }
+
+      break;
+    }
+
+    if (Key.ScanCode == SCAN_LEFT) {
+      Sel  = (Sel == 0) ? (INTN)ARRAY_SIZE (mBarItems) - 1 : Sel - 1;
+      Open = FALSE;
+    } else if (Key.ScanCode == SCAN_RIGHT) {
+      Sel  = (Sel + 1) % (INTN)ARRAY_SIZE (mBarItems);
+      Open = FALSE;
+    } else if (Open && (Key.ScanCode == SCAN_UP)) {
+      Sub = (Sub == 0) ? (INTN)ARRAY_SIZE (mHelpItems) - 1 : Sub - 1;
+    } else if (Open && (Key.ScanCode == SCAN_DOWN)) {
+      Sub = (Sub + 1) % (INTN)ARRAY_SIZE (mHelpItems);
+    } else if ((Key.UnicodeChar == CHAR_CARRIAGE_RETURN) || (Key.ScanCode == SCAN_DOWN)) {
+      if (Sel != UI_MOD_HELP) {
+        if (Key.UnicodeChar == CHAR_CARRIAGE_RETURN) {
+          Result = Sel;
+          break;
+        }
+      } else if (!Open) {
+        Open = TRUE;
+        Sub  = 0;
+      } else {
+        Result = UI_MOD_ABOUT + Sub;
+        break;
+      }
+    }
+  }
+
+  if (Saved != NULL) {
+    CopyMem (mCells, Saved, Size);
+    FreePool (Saved);
+  }
+
+  return Result;
+}
+
 VOID
 UiFrame (
   IN CONST CHAR16  *Title,
@@ -604,15 +750,23 @@ UiFrame (
   )
 {
   UINTN  Row;
+  UINTN  Len;
 
-  UiFillLine (0, ATTR_TITLE);
-  UiPrintAt (1, 0, ATTR_TITLE, L"uefirrw %s  |  %s", UEFIRRW_VERSION, Title);
+  UiDrawMenuBar (-1);
+  Len = StrLen (Title);
+  if (Len + 2 < gScreenCols) {
+    UiPrintAt (gScreenCols - Len - 2, 0, ATTR_TITLE, L"%s", Title);
+  }
+
   for (Row = 1; Row < gScreenRows - 1; Row++) {
     UiFillLine (Row, ATTR_NORMAL);
   }
 
   UiFillLine (gScreenRows - 1, ATTR_TITLE);
   UiPrintAt (1, gScreenRows - 1, ATTR_TITLE, L"%s", Help);
+  if (StrLen (Help) + 14 < gScreenCols) {
+    UiPrintAt (gScreenCols - 11, gScreenRows - 1, ATTR_TITLE, L"F10: Menu");
+  }
 }
 
 /**
@@ -636,20 +790,77 @@ UiStatus (
   UiPut (1, gScreenRows - 2, Attr, Buf);
 }
 
+/**
+  Wait for a key, at most TimeoutMs (0 = forever). F10 opens the menu bar
+  here, so every screen gets it; picking an entry sets gUiJump and returns
+  Esc so each screen unwinds back to the dispatcher.
+
+  @retval FALSE  timed out
+**/
+BOOLEAN
+UiReadKeyTimeout (
+  OUT EFI_INPUT_KEY  *Key,
+  IN  UINTN          TimeoutMs
+  )
+{
+  UINTN      Index;
+  EFI_EVENT  Events[2];
+  EFI_EVENT  Timer;
+  UINTN      Count;
+  INTN       Pick;
+
+  if (gUiJump >= 0) {
+    Key->ScanCode    = SCAN_ESC;
+    Key->UnicodeChar = CHAR_NULL;
+    return TRUE;
+  }
+
+  Timer = NULL;
+  Count = 1;
+  Events[0] = gST->ConIn->WaitForKey;
+  if ((TimeoutMs != 0) && !EFI_ERROR (gBS->CreateEvent (EVT_TIMER, 0, NULL, NULL, &Timer))) {
+    gBS->SetTimer (Timer, TimerRelative, MultU64x32 (TimeoutMs, 10000));
+    Events[1] = Timer;
+    Count     = 2;
+  }
+
+  for ( ; ;) {
+    UiFlush ();
+    gBS->WaitForEvent (Count, Events, &Index);
+    if (Index == 1) {
+      gBS->CloseEvent (Timer);
+      return FALSE;
+    }
+
+    if (EFI_ERROR (gST->ConIn->ReadKeyStroke (gST->ConIn, Key))) {
+      continue;
+    }
+
+    if (Key->ScanCode == SCAN_F10) {
+      Pick = UiTopMenu ();
+      if (Pick < 0) {
+        continue;
+      }
+
+      gUiJump          = Pick;
+      Key->ScanCode    = SCAN_ESC;
+      Key->UnicodeChar = CHAR_NULL;
+    }
+
+    if (Timer != NULL) {
+      gBS->CloseEvent (Timer);
+    }
+
+    return TRUE;
+  }
+}
+
 VOID
 UiReadKey (
   OUT EFI_INPUT_KEY  *Key
   )
 {
-  UINTN  Index;
-
-  UiFlush ();
-  for ( ; ;) {
-    gBS->WaitForEvent (1, &gST->ConIn->WaitForKey, &Index);
-    if (!EFI_ERROR (gST->ConIn->ReadKeyStroke (gST->ConIn, Key))) {
-      return;
-    }
-  }
+  UiReadKeyTimeout (Key, 0);
 }
 
 INTN
@@ -774,16 +985,13 @@ UiMenu (
   UINTN          Sel;
   UINTN          Index;
   EFI_INPUT_KEY  Key;
-  CHAR16         Mode[64];
   BOOLEAN        Redraw;
 
   Sel    = (Initial < Count) ? Initial : 0;
   Redraw = TRUE;
   for ( ; ;) {
     if (Redraw) {
-      UiFrame (Title, L"Up/Down: select   Enter: open   F2: font size   Esc: back/exit");
-      UiModeText (Mode, sizeof (Mode));
-      UiPrintAt (gScreenCols - StrLen (Mode) - 2, 0, ATTR_TITLE, L"%s", Mode);
+      UiFrame (Title, L"Up/Down: select   Enter: open   Esc: back");
       Redraw = FALSE;
     }
 
@@ -810,9 +1018,6 @@ UiMenu (
         break;
       case SCAN_END:
         Sel = Count - 1;
-        break;
-      case SCAN_F2:
-        Redraw = UiCycleScale ();
         break;
       case SCAN_ESC:
         return -1;

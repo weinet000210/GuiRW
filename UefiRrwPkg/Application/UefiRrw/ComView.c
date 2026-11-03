@@ -896,6 +896,7 @@ Terminal (
   BOOLEAN        Dirty;
   UINTN          Ticks;
   EFI_HANDLE     FwSerial;
+  INTN           Pick;
 
   FwSerial   = NULL;
   mBuf       = AllocatePool (BUF_MAX * sizeof (UINT16));
@@ -942,6 +943,18 @@ Terminal (
     }
 
     if (!EFI_ERROR (gST->ConIn->ReadKeyStroke (gST->ConIn, &Key))) {
+      if (Key.ScanCode == SCAN_F10) {
+        Pick = UiTopMenu ();
+        if (Pick >= 0) {
+          gUiJump = Pick;
+          break;
+        }
+
+        Draw (TRUE);
+        UiFlush ();
+        continue;
+      }
+
       if (HandleKey (&Key)) {
         break;
       }

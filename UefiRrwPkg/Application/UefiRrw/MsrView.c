@@ -218,7 +218,6 @@ MsrViewRun (
   UINT64         Input;
   EFI_STATUS     Status;
   CHAR16         Brand[64];
-  CHAR16         Question[96];
   BOOLEAN        Redraw;
 
   GuardInstall ();
@@ -314,15 +313,12 @@ MsrViewRun (
       M     = &mMsrs[Sel];
       Input = M->Value;
       if (UiPromptHex (L"New 64-bit value", 16, &Input)) {
-        UnicodeSPrint (Question, sizeof (Question), L"Write %016lx to MSR %08x (%s)?", Input, M->Index, M->Name);
-        if (UiConfirm (Question)) {
-          Status = SafeWriteMsr (M->Index, Input);
-          M->Valid = (BOOLEAN) !EFI_ERROR (SafeReadMsr (M->Index, &M->Value));
-          if (EFI_ERROR (Status)) {
-            UiStatus (ATTR_WARN, L"WRMSR %x raised #GP: value rejected.", M->Index);
-          } else {
-            UiStatus (ATTR_NORMAL, L"Wrote MSR %x, read back %016lx.", M->Index, M->Value);
-          }
+        Status = SafeWriteMsr (M->Index, Input);
+        M->Valid = (BOOLEAN) !EFI_ERROR (SafeReadMsr (M->Index, &M->Value));
+        if (EFI_ERROR (Status)) {
+          UiStatus (ATTR_WARN, L"WRMSR %x raised #GP: value rejected.", M->Index);
+        } else {
+          UiStatus (ATTR_NORMAL, L"Wrote MSR %x, read back %016lx.", M->Index, M->Value);
         }
       }
     }

@@ -9,7 +9,7 @@
   BASE_NAME                      = uefirrw
   FILE_GUID                      = 3D7A1F52-6C8B-4E29-A0D4-9B1E5F7C2A63
   MODULE_TYPE                    = UEFI_APPLICATION
-  VERSION_STRING                 = 0.4
+  VERSION_STRING                 = 0.5
   ENTRY_POINT                    = UefiMain
 
 [Sources]
@@ -26,6 +26,7 @@
   SmbiosView.c
   UsbView.c
   ComView.c
+  AcpiView.c
 
 [Packages]
   MdePkg/MdePkg.dec
@@ -33,6 +34,7 @@
 [LibraryClasses]
   UefiApplicationEntryPoint
   UefiBootServicesTableLib
+  UefiRuntimeServicesTableLib
   UefiLib
   BaseLib
   BaseMemoryLib
@@ -53,5 +55,7 @@
   gEfiSioProtocolGuid                           ## SOMETIMES_CONSUMES
 
 [Guids]
+  gEfiAcpi20TableGuid                           ## SOMETIMES_CONSUMES
+  gEfiAcpi10TableGuid                           ## SOMETIMES_CONSUMES
   gEfiSmbiosTableGuid                           ## SOMETIMES_CONSUMES
   gEfiSmbios3TableGuid                          ## SOMETIMES_CONSUMES
