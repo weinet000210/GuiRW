@@ -4,6 +4,30 @@ uefirrw BIOS tool under UEFI — a text-mode, RW-Everything style hardware read/
 
 ![Main menu](docs/images/main-menu.png)
 
+## About this project
+
+This tool was developed collaboratively with AI. You are welcome to copy, use, modify, redistribute and improve it under the terms of the license below. Pull requests, bug reports and forks are all welcome.
+
+**Who it is for:** BIOS/firmware engineers, hardware validation and bring-up teams, and anyone who needs to inspect hardware registers before an OS is installed.
+
+## ⚠️ Warning: use at your own risk
+
+This tool reads and writes hardware registers directly. Using it may cause system hangs, data loss, corrupted firmware settings or permanent hardware damage. **You use it entirely at your own risk.** The authors and contributors accept no responsibility or liability for any damage or loss of any kind resulting from its use. The software is provided "AS IS", without warranty of any kind.
+
+Higher-risk operations include:
+
+- Writing PCI config space (BARs, command register, bridge bus numbers, PCIe link control)
+- Writing MMIO or memory, especially chipset, SPI flash or ACPI regions
+- Writing IO ports (e.g. CF9h reset, CMOS, Super I/O, EC)
+- Writing MSRs (can hang the CPU, change voltage, frequency or lock bits)
+
+Recommendations:
+
+- Try it on a test or development machine first, not on production systems.
+- Note the original value before writing, so you can restore it.
+- Have a way to recover the BIOS (backup image, SPI programmer, or dual BIOS).
+- Reading is generally safe; every PCI and IO write asks for confirmation.
+
 ## Features (v0.4)
 
 | Module | What it does |
@@ -63,6 +87,17 @@ On non-x86 hosts install `gcc-x86-64-linux-gnu`; the script picks the cross pref
 
 ACPI tables, CPUID, full PCIe capability decode, PCIe MMIO UARTs, EC / SMBus / SPD, multi-core MSR.
 
-## License
+## Tested on
 
-BSD-2-Clause-Patent (same as edk2).
+- QEMU q35 + OVMF (edk2-stable202408)
+- A board with AMI BIOS (real hardware)
+
+Results on other platforms may vary; please report what you find.
+
+## License and credits
+
+BSD-2-Clause-Patent. The built-in 8x19 font comes from the edk2 project (TianoCore), also under BSD-2-Clause-Patent. Inspired by RW-Everything and RU.efi; this is an independent implementation and contains no code from either.
+
+## Reporting issues
+
+Open a GitHub issue with your board / BIOS vendor, BIOS version, what you did, and a photo of the screen if possible.
