@@ -89,13 +89,23 @@ Display: when the firmware exposes GOP, uefirrw draws its own 8x19 text (the edk
 |---|---|
 | ![File menu](docs/images/file-menu.png) | ![File browser](docs/images/file-browser.png) |
 
-| Text editor | |
+| Text editor | ACPI DSDT as ASL (F7) |
 |---|---|
-| ![Text editor](docs/images/text-editor.png) | |
+| ![Text editor](docs/images/text-editor.png) | ![ACPI ASL](docs/images/acpi-asl.png) |
+
+| SMBIOS list | USB device |
+|---|---|
+| ![SMBIOS list](docs/images/smbios-list.png) | ![USB device](docs/images/usb-device.png) |
+
+| ACPI MADT decoded | |
+|---|---|
+| ![ACPI MADT](docs/images/acpi-madt.png) | |
 
 | CMOS | ACPI find in ASL |
 |---|---|
 | ![CMOS](docs/images/cmos.png) | ![ACPI find](docs/images/acpi-find.png) |
+
+All screenshots: v0.8.0 on QEMU q35 + OVMF at 1280x800.
 
 | USB hot-plug (auto refresh) | About |
 |---|---|
