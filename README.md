@@ -1,2 +1,2 @@
-# GuiRW
-GuiRW BIOS tool under UEFI
+# uefirrw
+UEFI Resource Read & Write Tool
