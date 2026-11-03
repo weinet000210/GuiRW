@@ -12,6 +12,10 @@
 
 #define DOC_LINE_MAX  320
 
+BOOLEAN       gDocF7Exit;     // DocView returns on F7 (gDocLastScan = SCAN_F7)
+UINT16        gDocLastScan;
+CONST CHAR16  *gDocFooter;    // DocView footer override, NULL = default
+
 VOID
 DocInit (
   OUT TEXT_DOC  *Doc
@@ -201,21 +205,40 @@ DocView (
   IN TEXT_DOC      *Doc
   )
 {
+  STATIC CONST CHAR16  *Help[] = {
+    L"Up/Down       Move the line cursor",
+    L"PgUp/PgDn     Page up / down",
+    L"Home/End      First / last line",
+    L"Left/Right    Scroll the text sideways to read long lines",
+    L"Enter         Show the current line in full (wrapped)"
+  };
   UINTN          Top;
+  UINTN          Cur;
   UINTN          HScroll;
   UINTN          Visible;
   UINTN          Row;
-  UINTN          MaxTop;
+  UINTN          Len;
+  UINTN          Pos;
+  UINTN          Chunk;
   EFI_INPUT_KEY  Key;
 
   Top     = 0;
+  Cur     = 0;
   HScroll = 0;
-  UiFrame (Title, L"Up/Down/PgUp/PgDn/Home/End: scroll   Left/Right: pan   Esc: back");
+  gDocLastScan = SCAN_NULL;
+  UiFrame (Title, (gDocFooter != NULL) ? gDocFooter : L"Up/Down:line  Left/Right:scroll text  Enter:full line  F1:help  Esc:back");
   for ( ; ;) {
     Visible = gScreenRows - 4;
-    MaxTop  = (Doc->Count > Visible) ? Doc->Count - Visible : 0;
-    if (Top > MaxTop) {
-      Top = MaxTop;
+    if (Doc->Count == 0) {
+      Cur = 0;
+    } else if (Cur >= Doc->Count) {
+      Cur = Doc->Count - 1;
+    }
+
+    if (Cur < Top) {
+      Top = Cur;
+    } else if (Cur >= Top + Visible) {
+      Top = Cur - Visible + 1;
     }
 
     UiFillLine (1, ATTR_NORMAL);
@@ -225,50 +248,87 @@ DocView (
 
     for (Row = 0; Row < Visible; Row++) {
       if (Top + Row < Doc->Count) {
-        DrawDocLine (2 + Row, &Doc->Lines[Top + Row], Doc->Lines[Top + Row].Attr, HScroll);
+        DrawDocLine (2 + Row, &Doc->Lines[Top + Row], (Top + Row == Cur) ? ATTR_HILITE : Doc->Lines[Top + Row].Attr, HScroll);
       } else {
         UiFillLine (2 + Row, ATTR_NORMAL);
       }
     }
 
-    UiStatus (ATTR_DIM, L"Line %d-%d of %d", Doc->Count ? Top + 1 : 0, MIN (Top + Visible, Doc->Count), Doc->Count);
+    Len = (Doc->Count > 0) ? StrLen (Doc->Lines[Cur].Text) : 0;
+    UiStatus (
+      ATTR_DIM,
+      L"Line %d of %d   Col %d%s",
+      Doc->Count ? Cur + 1 : 0,
+      Doc->Count,
+      HScroll + 1,
+      (Len > HScroll + gScreenCols) ? L"   more ->  (Right or Enter)" : ((HScroll > 0) ? L"   <- (Left)" : L"")
+      );
+    UiSetHelp (Help, ARRAY_SIZE (Help));
     UiReadKey (&Key);
+    if ((Key.UnicodeChar == CHAR_CARRIAGE_RETURN) && (Doc->Count > 0)) {
+      //
+      // Wrap the current line over the bottom of the screen.
+      //
+      Chunk = gScreenCols - 2;
+      Row   = 2 + Visible - MIN ((Len + Chunk - 1) / Chunk, Visible);
+      for (Pos = 0; (Pos < Len) && (Row < 2 + Visible); Pos += Chunk, Row++) {
+        UiFillLine (Row, ATTR_EDIT);
+        UiPrintN (1, Row, ATTR_EDIT, Doc->Lines[Cur].Text + Pos, Chunk);
+      }
+
+      UiStatus (ATTR_DIM, L"Full line shown. Press any key.");
+      UiReadKey (&Key);
+      continue;
+    }
+
     switch (Key.ScanCode) {
       case SCAN_UP:
-        if (Top > 0) {
-          Top--;
+        if (Cur > 0) {
+          Cur--;
         }
 
         break;
       case SCAN_DOWN:
-        if (Top < MaxTop) {
-          Top++;
-        }
-
+        Cur++;
         break;
       case SCAN_PAGE_UP:
+        Cur = (Cur > Visible) ? Cur - Visible : 0;
         Top = (Top > Visible) ? Top - Visible : 0;
         break;
       case SCAN_PAGE_DOWN:
-        Top = MIN (Top + Visible, MaxTop);
+        Cur += Visible;
+        Top += Visible;
+        if ((Doc->Count > Visible) && (Top > Doc->Count - Visible)) {
+          Top = Doc->Count - Visible;
+        }
+
         break;
       case SCAN_HOME:
-        Top     = 0;
+        Cur     = 0;
         HScroll = 0;
         break;
       case SCAN_END:
-        Top = MaxTop;
+        Cur = (Doc->Count > 0) ? Doc->Count - 1 : 0;
         break;
       case SCAN_LEFT:
-        HScroll = (HScroll > 8) ? HScroll - 8 : 0;
+        HScroll = (HScroll > 16) ? HScroll - 16 : 0;
         break;
       case SCAN_RIGHT:
-        if (HScroll < DOC_LINE_MAX - 8) {
-          HScroll += 8;
+        if (HScroll + 16 < DOC_LINE_MAX) {
+          HScroll += 16;
+        }
+
+        break;
+      case SCAN_F7:
+      case SCAN_F2:
+        if (gDocF7Exit) {
+          gDocLastScan = Key.ScanCode;
+          return;
         }
 
         break;
       case SCAN_ESC:
+        gDocLastScan = SCAN_ESC;
         return;
       default:
         break;
@@ -391,6 +451,10 @@ DocSelect (
         return -4;
       }
 
+      if (Key.ScanCode == SCAN_F3) {
+        return -6;
+      }
+
       continue;
     }
 
@@ -449,6 +513,9 @@ DocSelect (
       case SCAN_F4:
         *Sel = (UINTN)Cur;
         return -4;
+      case SCAN_F3:
+        *Sel = (UINTN)Cur;
+        return -6;
       case SCAN_ESC:
         *Sel = (UINTN)Cur;
         return -1;

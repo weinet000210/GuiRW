@@ -6,6 +6,8 @@
   SPDX-License-Identifier: BSD-2-Clause-Patent
 **/
 
+#include <Protocol/LoadedImage.h>
+#include <Protocol/SimpleFileSystem.h>
 #include "UefiRrw.h"
 #include <Guid/Acpi.h>
 #include <IndustryStandard/Acpi.h>
@@ -21,6 +23,7 @@ typedef struct {
 
 STATIC ACPI_ENTRY  mTables[MAX_TABLES];
 STATIC UINTN       mTableCount;
+STATIC BOOLEAN     mAmlReady;
 STATIC UINT8       *mRsdp;
 
 STATIC
@@ -148,6 +151,7 @@ ScanAcpi (
   BOOLEAN Xsdt;
 
   mTableCount = 0;
+  mAmlReady   = FALSE;
   mRsdp       = NULL;
   if (EFI_ERROR (EfiGetSystemConfigurationTable (&gEfiAcpi20TableGuid, (VOID **)&mRsdp)) || (mRsdp == NULL)) {
     if (EFI_ERROR (EfiGetSystemConfigurationTable (&gEfiAcpi10TableGuid, (VOID **)&mRsdp))) {
@@ -471,16 +475,15 @@ DecodeDmar (
 
 STATIC
 VOID
-ShowTable (
-  IN ACPI_ENTRY  *E
+AddTableBody (
+  IN OUT TEXT_DOC  *Doc,
+  IN ACPI_ENTRY    *E
   )
 {
-  TEXT_DOC  Doc;
   CHAR16    Sig[5];
   CHAR16    Oem[7];
   CHAR16    OemTab[9];
   CHAR16    Creator[5];
-  CHAR16    Header[100];
   UINT8     *T;
   UINT32    Len;
   UINT32    Raw;
@@ -488,50 +491,247 @@ ShowTable (
   T   = E->Ptr;
   Len = E->Length;
   AsciiField (Sig, T, 4);
-  DocInit (&Doc);
-  DocAdd (&Doc, ATTR_HEADER, L"Header");
-  DocAdd (&Doc, ATTR_NORMAL, L"  Signature        %s", Sig);
-  DocAdd (&Doc, ATTR_NORMAL, L"  Address          %lX", (UINT64)(UINTN)T);
-  DocAdd (&Doc, ATTR_NORMAL, L"  Length           %d (%Xh)", Len, Len);
+  DocAdd (Doc, ATTR_HEADER, L"Header");
+  DocAdd (Doc, ATTR_NORMAL, L"  Signature        %s", Sig);
+  DocAdd (Doc, ATTR_NORMAL, L"  Address          %lX", (UINT64)(UINTN)T);
+  DocAdd (Doc, ATTR_NORMAL, L"  Length           %d (%Xh)", Len, Len);
   if (E->HasHeader) {
     AsciiField (Oem, T + 10, 6);
     AsciiField (OemTab, T + 16, 8);
     AsciiField (Creator, T + 28, 4);
-    DocAdd (&Doc, ATTR_NORMAL, L"  Revision         %d", T[8]);
-    DocAdd (&Doc, (Sum8 (T, Len) == 0) ? ATTR_NORMAL : ATTR_WARN, L"  Checksum         %02X (%s)", T[9], (Sum8 (T, Len) == 0) ? L"OK" : L"BAD");
-    DocAdd (&Doc, ATTR_NORMAL, L"  OEM ID           %s", Oem);
-    DocAdd (&Doc, ATTR_NORMAL, L"  OEM Table ID     %s", OemTab);
-    DocAdd (&Doc, ATTR_NORMAL, L"  OEM Revision     %08X", R32 (T + 24));
-    DocAdd (&Doc, ATTR_NORMAL, L"  Creator ID       %s  revision %08X", Creator, R32 (T + 32));
+    DocAdd (Doc, ATTR_NORMAL, L"  Revision         %d", T[8]);
+    DocAdd (Doc, (Sum8 (T, Len) == 0) ? ATTR_NORMAL : ATTR_WARN, L"  Checksum         %02X (%s)", T[9], (Sum8 (T, Len) == 0) ? L"OK" : L"BAD");
+    DocAdd (Doc, ATTR_NORMAL, L"  OEM ID           %s", Oem);
+    DocAdd (Doc, ATTR_NORMAL, L"  OEM Table ID     %s", OemTab);
+    DocAdd (Doc, ATTR_NORMAL, L"  OEM Revision     %08X", R32 (T + 24));
+    DocAdd (Doc, ATTR_NORMAL, L"  Creator ID       %s  revision %08X", Creator, R32 (T + 32));
   } else if (CompareMem (T, "FACS", 4) == 0) {
-    DocAdd (&Doc, ATTR_NORMAL, L"  HW signature     %08X", R32 (T + 8));
-    DocAdd (&Doc, ATTR_NORMAL, L"  Waking vector    %08X  X: %lX", R32 (T + 12), R64 (T + 24));
-    DocAdd (&Doc, ATTR_NORMAL, L"  Global lock      %08X   Flags %08X   Version %d", R32 (T + 16), R32 (T + 20), T[32]);
+    DocAdd (Doc, ATTR_NORMAL, L"  HW signature     %08X", R32 (T + 8));
+    DocAdd (Doc, ATTR_NORMAL, L"  Waking vector    %08X  X: %lX", R32 (T + 12), R64 (T + 24));
+    DocAdd (Doc, ATTR_NORMAL, L"  Global lock      %08X   Flags %08X   Version %d", R32 (T + 16), R32 (T + 20), T[32]);
   }
 
-  DocAdd (&Doc, ATTR_NORMAL, L"");
+  DocAdd (Doc, ATTR_NORMAL, L"");
   if (CompareMem (T, "FACP", 4) == 0) {
-    DecodeFadt (&Doc, T, Len);
+    DecodeFadt (Doc, T, Len);
   } else if (CompareMem (T, "APIC", 4) == 0) {
-    DecodeMadt (&Doc, T, Len);
+    DecodeMadt (Doc, T, Len);
   } else if (CompareMem (T, "MCFG", 4) == 0) {
-    DecodeMcfg (&Doc, T, Len);
+    DecodeMcfg (Doc, T, Len);
   } else if (CompareMem (T, "HPET", 4) == 0) {
-    DecodeHpet (&Doc, T, Len);
+    DecodeHpet (Doc, T, Len);
   } else if (CompareMem (T, "DMAR", 4) == 0) {
-    DecodeDmar (&Doc, T, Len);
+    DecodeDmar (Doc, T, Len);
   } else if ((CompareMem (T, "DSDT", 4) == 0) || (CompareMem (T, "SSDT", 4) == 0)) {
-    DocAdd (&Doc, ATTR_DIM, L"AML definition block: raw bytes below (disassemble with iasl -d on a saved copy).");
+    DocAdd (Doc, ATTR_DIM, L"AML definition block: raw bytes below (disassemble with iasl -d on a saved copy).");
   }
 
-  DocAdd (&Doc, ATTR_NORMAL, L"");
+  DocAdd (Doc, ATTR_NORMAL, L"");
   Raw = (Len > RAW_MAX) ? RAW_MAX : Len;
-  DocAdd (&Doc, ATTR_HEADER, L"Raw data%s", (Raw < Len) ? L" (first 512 KB)" : L"");
-  DocAddHex (&Doc, T, Raw, 0);
+  DocAdd (Doc, ATTR_HEADER, L"Raw data%s", (Raw < Len) ? L" (first 512 KB)" : L"");
+  DocAddHex (Doc, T, Raw, 0);
 
-  UnicodeSPrint (Header, sizeof (Header), L"%s  at %lX  length %Xh", Sig, (UINT64)(UINTN)T, Len);
-  DocView (L"ACPI Table", Header, &Doc);
+}
+
+STATIC
+VOID
+PrepareAml (
+  VOID
+  )
+{
+  UINT8   *Ptrs[MAX_TABLES];
+  UINT32  Lens[MAX_TABLES];
+  UINTN   Count;
+  UINTN   Index;
+
+  Count = 0;
+  for (Index = 0; Index < mTableCount; Index++) {
+    if ((CompareMem (mTables[Index].Ptr, "DSDT", 4) == 0) || (CompareMem (mTables[Index].Ptr, "SSDT", 4) == 0)) {
+      Ptrs[Count] = mTables[Index].Ptr;
+      Lens[Count] = mTables[Index].Length;
+      Count++;
+    }
+  }
+
+  AmlPrepare (Ptrs, Lens, Count);
+  mAmlReady = TRUE;
+}
+
+/**
+  Write Size bytes to Name in the root of the volume uefirrw.efi was
+  loaded from.
+**/
+STATIC
+EFI_STATUS
+SaveFile (
+  IN CONST CHAR16  *Name,
+  IN VOID          *Data,
+  IN UINTN         Size
+  )
+{
+  EFI_STATUS                       Status;
+  EFI_LOADED_IMAGE_PROTOCOL        *Image;
+  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL  *Fs;
+  EFI_FILE_PROTOCOL                *Root;
+  EFI_FILE_PROTOCOL                *File;
+
+  Status = gBS->HandleProtocol (gImageHandle, &gEfiLoadedImageProtocolGuid, (VOID **)&Image);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  Status = gBS->HandleProtocol (Image->DeviceHandle, &gEfiSimpleFileSystemProtocolGuid, (VOID **)&Fs);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  Status = Fs->OpenVolume (Fs, &Root);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  //
+  // Replace any old copy.
+  //
+  if (!EFI_ERROR (Root->Open (Root, &File, (CHAR16 *)Name, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))) {
+    File->Delete (File);
+  }
+
+  Status = Root->Open (Root, &File, (CHAR16 *)Name, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0);
+  if (!EFI_ERROR (Status)) {
+    Status = File->Write (File, &Size, Data);
+    File->Close (File);
+  }
+
+  Root->Close (Root);
+  return Status;
+}
+
+/**
+  F2 in a DSDT/SSDT: save the raw table (.aml) and the ASL text (.dsl).
+**/
+STATIC
+VOID
+SaveAml (
+  IN ACPI_ENTRY  *E,
+  IN UINTN       Number
+  )
+{
+  TEXT_DOC    Doc;
+  CHAR8       *Text;
+  UINTN       Size;
+  UINTN       Pos;
+  UINTN       Line;
+  UINTN       Index;
+  CHAR16      *L;
+  CHAR16      Name[32];
+  CHAR16      Name2[32];
+  EFI_STATUS  Status;
+
+  UnicodeSPrint (Name, sizeof (Name), L"%c%c%c%c%d.aml", E->Ptr[0], E->Ptr[1], E->Ptr[2], E->Ptr[3], Number);
+  UnicodeSPrint (Name2, sizeof (Name2), L"%c%c%c%c%d.dsl", E->Ptr[0], E->Ptr[1], E->Ptr[2], E->Ptr[3], Number);
+  Status = SaveFile (Name, E->Ptr, E->Length);
+  if (EFI_ERROR (Status)) {
+    UiStatus (ATTR_WARN, L"Save failed: %r (needs a writable FAT volume)", Status);
+    return;
+  }
+
+  if (!mAmlReady) {
+    PrepareAml ();
+  }
+
+  DocInit (&Doc);
+  AmlDisassemble (&Doc, E->Ptr, E->Length);
+  Size = 0;
+  for (Line = 0; Line < Doc.Count; Line++) {
+    Size += StrLen (Doc.Lines[Line].Text) + 2;
+  }
+
+  Text = AllocatePool (Size + 1);
+  if (Text == NULL) {
+    DocFree (&Doc);
+    UiStatus (ATTR_WARN, L"Out of memory.");
+    return;
+  }
+
+  Pos = 0;
+  for (Line = 0; Line < Doc.Count; Line++) {
+    L = Doc.Lines[Line].Text;
+    for (Index = 0; L[Index] != 0; Index++) {
+      Text[Pos++] = (L[Index] < 0x80) ? (CHAR8)L[Index] : '?';
+    }
+
+    Text[Pos++] = '\r';
+    Text[Pos++] = '\n';
+  }
+
   DocFree (&Doc);
+  Status = SaveFile (Name2, Text, Pos);
+  FreePool (Text);
+  if (EFI_ERROR (Status)) {
+    UiStatus (ATTR_WARN, L"Saved %s, %s failed: %r", Name, Name2, Status);
+  } else {
+    UiStatus (ATTR_CHANGED, L"Saved %s and %s to the root of this volume.", Name, Name2);
+  }
+}
+
+STATIC
+VOID
+ShowTable (
+  IN ACPI_ENTRY  *E
+  )
+{
+  TEXT_DOC  Doc;
+  CHAR16    Sig[5];
+  CHAR16    Header[100];
+  BOOLEAN        IsAml;
+  BOOLEAN        Asl;
+  EFI_INPUT_KEY  Key;
+
+  AsciiField (Sig, E->Ptr, 4);
+  IsAml = (BOOLEAN)((CompareMem (E->Ptr, "DSDT", 4) == 0) || (CompareMem (E->Ptr, "SSDT", 4) == 0));
+  Asl   = FALSE;
+  for ( ; ;) {
+    DocInit (&Doc);
+    if (Asl) {
+      if (!mAmlReady) {
+        UiStatus (ATTR_NORMAL, L"Disassembling AML...");
+        UiFlush ();
+        PrepareAml ();
+      }
+
+      AmlDisassemble (&Doc, E->Ptr, E->Length);
+    } else {
+      AddTableBody (&Doc, E);
+    }
+
+    UnicodeSPrint (
+      Header,
+      sizeof (Header),
+      L"%s  at %lX  length %Xh%s",
+      Sig,
+      (UINT64)(UINTN)E->Ptr,
+      E->Length,
+      IsAml ? (Asl ? L"   [ASL source]  F7: decoded view" : L"   F7: ASL source") : L""
+      );
+    gDocF7Exit = IsAml;
+    gDocFooter = IsAml ? L"F7:ASL/decoded  F2:save .aml+.dsl  Left/Right:scroll  F1:help  Esc:back" : NULL;
+    DocView (Asl ? L"ACPI Table - ASL" : L"ACPI Table", Header, &Doc);
+    gDocF7Exit = FALSE;
+    gDocFooter = NULL;
+    DocFree (&Doc);
+    if (gDocLastScan == SCAN_F2) {
+      SaveAml (E, (UINTN)(E - mTables));
+      UiReadKey (&Key);
+      continue;
+    }
+
+    if (gDocLastScan != SCAN_F7) {
+      break;
+    }
+
+    Asl = (BOOLEAN)!Asl;
+  }
 }
 
 STATIC
@@ -594,6 +794,14 @@ BuildList (
   }
 }
 
+STATIC CONST CHAR16  *mAcpiHelp[] = {
+  L"Up/Down       Select a table",
+  L"Enter         Open the table: header, decoded fields, raw bytes",
+  L"F7            In DSDT / SSDT: switch decoded view / ASL source",
+  L"F2            In DSDT / SSDT: save SIGn.aml and SIGn.dsl to this volume",
+  L"F5            Rescan"
+};
+
 VOID
 AcpiViewRun (
   VOID
@@ -609,7 +817,8 @@ AcpiViewRun (
   for ( ; ;) {
     BuildList (&Doc);
     UnicodeSPrint (Header, sizeof (Header), L" Sig   OEM     Table ID  Rev      Length       Address  Checksum   (%d tables)", mTableCount);
-    Pick = DocSelect (L"ACPI Tables", L"Up/Down/PgUp/PgDn: select   Enter: open table   F5: rescan   Esc: back", Header, &Doc, &Sel);
+    UiSetHelp (mAcpiHelp, ARRAY_SIZE (mAcpiHelp));
+    Pick = DocSelect (L"ACPI Tables", L"Enter:open  F5:rescan  F1:help  Esc:back", Header, &Doc, &Sel);
     DocFree (&Doc);
     if (Pick == -1) {
       return;

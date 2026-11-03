@@ -27,6 +27,7 @@
   UsbView.c
   ComView.c
   AcpiView.c
+  AmlView.c
 
 [Packages]
   MdePkg/MdePkg.dec
@@ -52,6 +53,8 @@
   gEfiPciIoProtocolGuid                         ## SOMETIMES_CONSUMES
   gEfiDevicePathProtocolGuid                    ## SOMETIMES_CONSUMES
   gEfiSerialIoProtocolGuid                      ## SOMETIMES_CONSUMES
+  gEfiLoadedImageProtocolGuid                   ## SOMETIMES_CONSUMES
+  gEfiSimpleFileSystemProtocolGuid              ## SOMETIMES_CONSUMES
   gEfiSioProtocolGuid                           ## SOMETIMES_CONSUMES
 
 [Guids]

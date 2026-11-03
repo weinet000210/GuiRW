@@ -493,7 +493,7 @@ FindChild (
 // stay in place in red, both for HOTPLUG_SECONDS.
 //
 
-#define HOTPLUG_SECONDS  20
+#define HOTPLUG_SECONDS  10
 #define AUTO_REFRESH_MS  5000
 
 typedef struct {
@@ -1099,6 +1099,16 @@ ShowController (
   DocFree (&Doc);
 }
 
+STATIC CONST CHAR16  *mUsbHelp[] = {
+  L"Up/Down       Select a controller or device",
+  L"Enter         Details: descriptors, configuration, port status",
+  L"F5            Rescan now",
+  L"F6            Auto refresh every 5 s on / off",
+  L"              Green [new]: just attached; red [removed]: just",
+  L"              unplugged. Both marks clear after 10 s.",
+  L"              Only devices the firmware enumerates are seen."
+};
+
 VOID
 UsbViewRun (
   VOID
@@ -1135,12 +1145,13 @@ UsbViewRun (
       mDevCount,
       mAuto ? L"    [AUTO REFRESH 5s]  green = new, red = removed" : L""
       );
+    UiSetHelp (mUsbHelp, ARRAY_SIZE (mUsbHelp));
     gDocTimeoutMs = mAuto ? AUTO_REFRESH_MS : 0;
     gDocKeepTop   = TRUE;
     Pick = DocSelect (
              L"USB Devices",
-             mAuto ? L"Enter: details   F5: rescan   F6: auto refresh OFF   Esc: back"
-                   : L"Up/Down/PgUp/PgDn: select   Enter: details   F5: rescan   F6: auto refresh (5 s)   Esc: back",
+             mAuto ? L"Enter:details  F5:rescan  F6:auto OFF  F1:help  Esc:back"
+                   : L"Enter:details  F5:rescan  F6:auto 5s  F1:help  Esc:back",
              Header,
              &Doc,
              &Sel

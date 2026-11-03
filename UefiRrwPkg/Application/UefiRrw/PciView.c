@@ -1145,6 +1145,16 @@ ShowPciInfo (
   DocFree (&Doc);
 }
 
+STATIC CONST CHAR16  *mPciHelp[] = {
+  L"Up/Down       Select a device",
+  L"PgUp/PgDn     Page up / down",
+  L"Home/End      First / last device",
+  L"Enter         Config space editor (256 B / 4 KB)",
+  L"F4            Device info: header, BARs, capabilities decoded",
+  L"F5            Rescan the PCI bus",
+  L"F6            Switch list view / PCIe tree view"
+};
+
 /**
   @retval TRUE   switch back to the list (F6)
   @retval FALSE  leave the PCI screen (Esc)
@@ -1165,9 +1175,10 @@ PciTreeRun (
   for ( ; ;) {
     BuildPciTree (&Doc);
     UnicodeSPrint (Header, sizeof (Header), L"%d device(s), %d root bridge(s)", mDevCount, mRootCount);
+    UiSetHelp (mPciHelp, ARRAY_SIZE (mPciHelp));
     Pick = DocSelect (
              L"PCI Tree",
-             L"Up/Down/PgUp/PgDn: select   Enter: config space   F4: device info   F5: rescan   F6: list view   Esc: back",
+             L"Enter:config  F4:info  F5:rescan  F6:list  F1:help  Esc:back",
              Header,
              &Doc,
              &Sel
@@ -1222,7 +1233,7 @@ PciViewRun (
   for ( ; ;) {
     Visible = gScreenRows - 6;
     if (Redraw) {
-      UiFrame (L"PCI Devices", L"Up/Down/PgUp/PgDn: select   Enter: config space   F4: device info   F5: rescan   F6: tree view   Esc: back");
+      UiFrame (L"PCI Devices", L"Enter:config  F4:info  F5:rescan  F6:tree  F1:help  Esc:back");
       UiPrintAt (1, 1, ATTR_HEADER, L"%d device(s) found", mDevCount);
       UiPrintAt (1, 2, ATTR_HEADER, L" Seg  Bus Dev Fn  Vendor Device  Class     Type");
       Redraw = FALSE;
@@ -1264,6 +1275,7 @@ PciViewRun (
         );
     }
 
+    UiSetHelp (mPciHelp, ARRAY_SIZE (mPciHelp));
     UiReadKey (&Key);
     switch (Key.ScanCode) {
       case SCAN_ESC:

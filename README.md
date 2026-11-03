@@ -30,7 +30,7 @@ Recommendations:
 
 ## Features (v0.5)
 
-Navigation works like RU: the tool opens on the PCI list, and `F10` (or `Esc` out of a screen) opens the menu bar `PCI  Memory  IO  MSR  ACPI  SMBIOS  USB  COM  Help`. Left/Right to choose, Enter to open. **Help** holds About (version, build date, author, download link), Font Size and Exit.
+Navigation works like RU: the tool opens on the PCI list, and `F10` (or `Esc` out of a screen) opens the menu bar `PCI  Memory  IO  MSR  ACPI  SMBIOS  USB  COM  Help`. Left/Right to choose, Enter to open. **Help** holds Keys, About (version, build date, author, download link) and Exit. `F1` on any screen lists that screen's keys.
 
 
 | Module | What it does |
@@ -41,7 +41,7 @@ Navigation works like RU: the tool opens on the PCI list, and `F10` (or `Esc` ou
 | **MSR** | Boot-processor MSR list with common architectural MSRs, 64-bit bit view, add any MSR, write (`W`). A temporary #GP handler skips faulting RDMSR/WRMSR so unsupported MSRs report an error instead of hanging. |
 | **SMBIOS** | Finds the SMBIOS 3.x (or 2.x) entry point, lists every structure (type, handle, length, name). Enter shows decoded fields (types 0, 1, 2, 3, 4, 7, 8, 9, 11, 12, 13, 16, 17, 19, 32, 41), the string set, and a raw dump. |
 | **USB Devices** | Tree of host controllers (xHCI/EHCI/OHCI/UHCI with PCI location), root hub ports, hubs and devices with VID:PID, product string, class and speed. Enter on a device shows connection info, the device descriptor, the full configuration set (interfaces, endpoints, HID, IAD, SuperSpeed companion), hub port status and raw descriptors; Enter on a controller shows its root port status. `F6` turns on auto refresh every 5 s for hot-plug testing: newly attached devices show green `[new]` and removed devices stay in place in red `[removed]` for 20 s. Read-only. |
-| **ACPI Tables** | RSDP, XSDT/RSDT and every table (plus DSDT and FACS from the FADT) with OEM IDs, length, address and checksum check. Enter decodes the header and FADT, MADT (CPU count), MCFG (ECAM), HPET and DMAR (VT-d), then shows the raw bytes. |
+| **ACPI Tables** | RSDP, XSDT/RSDT and every table (plus DSDT and FACS from the FADT) with OEM IDs, length, address and checksum check. Enter decodes the header and FADT, MADT (CPU count), MCFG (ECAM), HPET and DMAR (VT-d), then shows the raw bytes. In DSDT/SSDT, `F7` switches to ASL source from the built-in AML disassembler, and `F2` saves `DSDTn.aml` and `DSDTn.dsl` next to uefirrw.efi. |
 | **COM Port Test** | Detects 16550 UARTs at 3F8h, 2F8h, 3E8h, 2E8h (or any IO base) and opens a polled terminal: upper window ASCII, lower window hex, sent bytes yellow and received white. Type to send, `Tab` for raw hex input, `F2` baud (9600-115200, 8N1), `F4` internal loopback self-test, `F5` hide sent bytes, `F6` Enter as CR / CR+LF / LF. Shows LSR/MSR, modem lines and overrun/framing/parity counts. The firmware's serial console on that port is paused while testing and restored on exit. |
 
 Hex editor keys: arrows move, PgUp/PgDn change page, `W` cycles Byte/Word/DWord, `G` goes to an address, `F5` re-reads, type hex digits to edit (Enter or a full value commits; every write is read back and verified), `Esc` goes back.

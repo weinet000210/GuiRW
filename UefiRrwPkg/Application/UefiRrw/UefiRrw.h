@@ -16,7 +16,7 @@
 #include <Library/PrintLib.h>
 #include <Library/IoLib.h>
 
-#define UEFIRRW_VERSION  L"0.5.0"
+#define UEFIRRW_VERSION  L"0.6.0"
 
 //
 // Colors
@@ -64,6 +64,44 @@ UiDrawMenuBar (
 INTN
 UiTopMenu (
   VOID
+  );
+
+VOID
+UiSetHelp (
+  IN CONST CHAR16  **Lines,
+  IN UINTN         Count
+  );
+
+VOID
+UiShowHelp (
+  VOID
+  );
+
+extern BOOLEAN       gDocF7Exit;
+extern UINT16        gDocLastScan;
+extern CONST CHAR16  *gDocFooter;
+
+VOID
+AmlPrepare (
+  IN UINT8   **Tables,
+  IN UINT32  *Lengths,
+  IN UINTN   Count
+  );
+
+VOID
+AmlDisassemble (
+  IN OUT VOID      *Doc,
+  IN     UINT8     *Table,
+  IN     UINT32    Length
+  );
+
+VOID
+UiPrintN (
+  IN UINTN         Col,
+  IN UINTN         Row,
+  IN UINTN         Attr,
+  IN CONST CHAR16  *Str,
+  IN UINTN         N
   );
 
 BOOLEAN

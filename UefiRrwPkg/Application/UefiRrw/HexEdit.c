@@ -16,6 +16,7 @@ typedef struct {
   UINT8      Data[PAGE_SIZE_BYTES];
   BOOLEAN    Valid[PAGE_SIZE_BYTES];
   UINTN      Width;               // 1, 2 or 4
+  BOOLEAN    Auto;                // re-read every 5 s
   UINTN      Cursor;              // byte offset in page, aligned to Width
   BOOLEAN    Editing;
   CHAR16     EditBuf[9];
@@ -114,7 +115,7 @@ DrawCell (
   }
 
   if (!St->Valid[Off]) {
-    UiPrintAt (Col, Row, (Off == St->Cursor) ? ATTR_HILITE : ATTR_DIM, L"%.*s", St->Width * 2, L"????????");
+    UiPrintAt (Col, Row, (Off == St->Cursor) ? ATTR_HILITE : ATTR_DIM, L"%s", L"????????" + 8 - St->Width * 2);
     return;
   }
 
@@ -145,7 +146,7 @@ DrawPage (
   UINT8   Ch;
   CHAR16  *WidthName;
 
-  WidthName = (St->Width == 1) ? L"Byte" : ((St->Width == 2) ? L"Word" : L"DWord");
+  WidthName = (St->Width == 1) ? L"Byte 8-bit" : ((St->Width == 2) ? L"Word 16-bit" : L"DWord 32-bit");
   UiFillLine (1, ATTR_NORMAL);
   UiPrintAt (1, 1, ATTR_HEADER, L"%s", Space->Title);
   UiFillLine (2, ATTR_NORMAL);
@@ -153,12 +154,13 @@ DrawPage (
     1,
     2,
     ATTR_NORMAL,
-    L"Page %0*lx - %0*lx   View: %s%s",
+    L"Page %0*lx - %0*lx   Width: %s  (F2 8 / F3 16 / F4 32)%s%s",
     Space->AddrDigits,
     Space->Base,
     Space->AddrDigits,
     Space->Base + PAGE_SIZE_BYTES - 1,
     WidthName,
+    St->Auto ? L"   [AUTO REFRESH 5s]" : L"",
     (Space->Write == NULL) ? L"   [read-only]" : L""
     );
 
@@ -301,6 +303,19 @@ CommitEdit (
   }
 }
 
+STATIC CONST CHAR16  *mHexHelp[] = {
+  L"Arrows        Move the cursor",
+  L"PgUp/PgDn     Previous / next 256-byte page",
+  L"Home/End      First / last unit of the page",
+  L"F2 / F3 / F4  Width: Byte 8-bit / Word 16-bit / DWord 32-bit",
+  L"W             Cycle the width",
+  L"G             Go to an address (Memory, IO)",
+  L"0-9, A-F      Type a new value; Enter (or a full value) writes it",
+  L"              Writes go straight to hardware, no confirmation",
+  L"F5            Re-read the page",
+  L"F6            Auto refresh every 5 s on / off"
+};
+
 VOID
 HexEditRun (
   IN OUT HEX_EDIT_SPACE  *Space
@@ -320,8 +335,8 @@ HexEditRun (
   UiFrame (
     L"Hex Editor",
     Space->AllowGoto
-    ? L"Arrows:move  PgUp/PgDn:page  G:goto  W:width  F5:refresh  0-F:edit  Esc:back"
-    : L"Arrows:move  PgUp/PgDn:page  W:width  F5:refresh  0-F:edit  Esc:back"
+    ? L"G:goto  F2/F3/F4:8/16/32-bit  F5:refresh  F6:auto  F1:help  Esc:back"
+    : L"F2/F3/F4:8/16/32-bit  F5:refresh  F6:auto  F1:help  Esc:back"
     );
   ReadPage (Space, &St);
   Redraw = TRUE;
@@ -333,7 +348,13 @@ HexEditRun (
     }
 
     DrawCursorInfo (Space, &St);
-    UiReadKey (&Key);
+    UiSetHelp (mHexHelp, ARRAY_SIZE (mHexHelp));
+    if (!UiReadKeyTimeout (&Key, (St.Auto && !St.Editing) ? 5000 : 0)) {
+      ReadPage (Space, &St);
+      Redraw = TRUE;
+      continue;
+    }
+
     OldCursor = St.Cursor;
     Ch        = Key.UnicodeChar;
 
@@ -413,6 +434,19 @@ HexEditRun (
         ReadPage (Space, &St);
         Redraw = TRUE;
         UiStatus (ATTR_NORMAL, L"Refreshed.");
+        break;
+      case SCAN_F2:
+      case SCAN_F3:
+      case SCAN_F4:
+        St.Width  = (Key.ScanCode == SCAN_F2) ? 1 : ((Key.ScanCode == SCAN_F3) ? 2 : 4);
+        St.Cursor = St.Cursor & ~(St.Width - 1);
+        ReadPage (Space, &St);
+        Redraw = TRUE;
+        break;
+      case SCAN_F6:
+        St.Auto = (BOOLEAN)!St.Auto;
+        Redraw  = TRUE;
+        UiStatus (ATTR_NORMAL, St.Auto ? L"Auto refresh every 5 s: ON" : L"Auto refresh: OFF");
         break;
       default:
         break;
