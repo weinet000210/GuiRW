@@ -557,10 +557,6 @@ PrepareAml (
   mAmlReady = TRUE;
 }
 
-/**
-  Write Size bytes to Name in the root of the volume uefirrw.efi was
-  loaded from.
-**/
 STATIC
 EFI_STATUS
 SaveFile (
@@ -569,42 +565,7 @@ SaveFile (
   IN UINTN         Size
   )
 {
-  EFI_STATUS                       Status;
-  EFI_LOADED_IMAGE_PROTOCOL        *Image;
-  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL  *Fs;
-  EFI_FILE_PROTOCOL                *Root;
-  EFI_FILE_PROTOCOL                *File;
-
-  Status = gBS->HandleProtocol (gImageHandle, &gEfiLoadedImageProtocolGuid, (VOID **)&Image);
-  if (EFI_ERROR (Status)) {
-    return Status;
-  }
-
-  Status = gBS->HandleProtocol (Image->DeviceHandle, &gEfiSimpleFileSystemProtocolGuid, (VOID **)&Fs);
-  if (EFI_ERROR (Status)) {
-    return Status;
-  }
-
-  Status = Fs->OpenVolume (Fs, &Root);
-  if (EFI_ERROR (Status)) {
-    return Status;
-  }
-
-  //
-  // Replace any old copy.
-  //
-  if (!EFI_ERROR (Root->Open (Root, &File, (CHAR16 *)Name, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))) {
-    File->Delete (File);
-  }
-
-  Status = Root->Open (Root, &File, (CHAR16 *)Name, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0);
-  if (!EFI_ERROR (Status)) {
-    Status = File->Write (File, &Size, Data);
-    File->Close (File);
-  }
-
-  Root->Close (Root);
-  return Status;
+  return FileSaveOnImageVolume (Name, Data, Size);
 }
 
 /**
@@ -831,6 +792,50 @@ AcpiViewRun (
 
     if ((Pick >= 0) && ((UINTN)Pick < mTableCount)) {
       ShowTable (&mTables[Pick]);
+    }
+  }
+}
+
+/**
+  File > Dump All: table list and every table decoded, plus ASL for
+  DSDT/SSDT.
+**/
+VOID
+AcpiDump (
+  IN OUT TEXT_DOC  *Out
+  )
+{
+  TEXT_DOC  List;
+  UINTN     Index;
+  TEXT_DOC  *Saved;
+  CHAR16    Sig[5];
+
+  ScanAcpi ();
+  BuildList (&List);
+  DocAdd (Out, ATTR_NORMAL, L"==== ACPI Tables (%d) ====", mTableCount);
+  for (Index = 0; Index < List.Count; Index++) {
+    DocAdd (Out, ATTR_NORMAL, L"%s", List.Lines[Index].Text);
+  }
+
+  DocFree (&List);
+  DocAdd (Out, ATTR_NORMAL, L"");
+  Saved       = gDocCapture;
+  gDocCapture = Out;
+  for (Index = 0; Index < mTableCount; Index++) {
+    ShowTable (&mTables[Index]);
+  }
+
+  gDocCapture = Saved;
+  for (Index = 0; Index < mTableCount; Index++) {
+    if ((CompareMem (mTables[Index].Ptr, "DSDT", 4) == 0) || (CompareMem (mTables[Index].Ptr, "SSDT", 4) == 0)) {
+      if (!mAmlReady) {
+        PrepareAml ();
+      }
+
+      AsciiField (Sig, mTables[Index].Ptr, 4);
+      DocAdd (Out, ATTR_NORMAL, L"==== %s %d ASL ====", Sig, Index);
+      AmlDisassemble (Out, mTables[Index].Ptr, mTables[Index].Length);
+      DocAdd (Out, ATTR_NORMAL, L"");
     }
   }
 }

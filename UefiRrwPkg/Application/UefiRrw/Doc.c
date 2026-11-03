@@ -17,9 +17,8 @@ STATIC CHAR16  mFind[64];
 /**
   Read a line of text on the status line. FALSE on Esc.
 **/
-STATIC
 BOOLEAN
-PromptText (
+UiPromptText (
   IN     CONST CHAR16  *Prompt,
   IN OUT CHAR16        *Buf,
   IN     UINTN         Max
@@ -30,7 +29,7 @@ PromptText (
 
   Len = StrLen (Buf);
   for ( ; ;) {
-    UiStatus (ATTR_EDIT, L"%s: %s_   (Enter=find, Esc=cancel)", Prompt, Buf);
+    UiStatus (ATTR_EDIT, L"%s: %s_   (Enter=OK, Esc=cancel)", Prompt, Buf);
     UiReadKey (&Key);
     if (Key.ScanCode == SCAN_ESC) {
       return FALSE;
@@ -63,9 +62,8 @@ Lower (
 /**
   Case-insensitive search. Returns the column of the match or -1.
 **/
-STATIC
 INTN
-FindIn (
+DocFindIn (
   IN CONST CHAR16  *Text,
   IN CONST CHAR16  *Pat
   )
@@ -85,6 +83,7 @@ FindIn (
   return -1;
 }
 
+TEXT_DOC      *gDocCapture;   // non-NULL: DocView appends here instead of showing
 BOOLEAN       gDocF7Exit;     // DocView returns on F7 (gDocLastScan = SCAN_F7)
 UINT16        gDocLastScan;
 CONST CHAR16  *gDocFooter;    // DocView footer override, NULL = default
@@ -301,6 +300,21 @@ DocView (
   UINTN          Chunk;
   EFI_INPUT_KEY  Key;
 
+  if (gDocCapture != NULL) {
+    DocAdd (gDocCapture, ATTR_NORMAL, L"==== %s ====", Title);
+    if (Header != NULL) {
+      DocAdd (gDocCapture, ATTR_NORMAL, L"%s", Header);
+    }
+
+    for (Top = 0; Top < Doc->Count; Top++) {
+      DocAdd (gDocCapture, ATTR_NORMAL, L"%s", Doc->Lines[Top].Text);
+    }
+
+    DocAdd (gDocCapture, ATTR_NORMAL, L"");
+    gDocLastScan = SCAN_ESC;
+    return;
+  }
+
   Top     = 0;
   Cur     = 0;
   HScroll = 0;
@@ -351,7 +365,7 @@ DocView (
     UiReadKey (&Key);
     if ((Key.UnicodeChar == L'/') || (Key.UnicodeChar == 0x06) || (Key.ScanCode == SCAN_F3) || (Key.UnicodeChar == L'n')) {
       if ((Key.UnicodeChar == L'/') || (Key.UnicodeChar == 0x06) || (mFind[0] == 0)) {
-        if (!PromptText (L"Find", mFind, ARRAY_SIZE (mFind))) {
+        if (!UiPromptText (L"Find", mFind, ARRAY_SIZE (mFind))) {
           continue;
         }
       }
@@ -360,7 +374,7 @@ DocView (
       Line = Cur;
       for (Step = 1; Step <= Doc->Count; Step++) {
         Line = (Cur + Step) % Doc->Count;
-        Col  = FindIn (Doc->Lines[Line].Text, mFind);
+        Col  = DocFindIn (Doc->Lines[Line].Text, mFind);
         if (Col >= 0) {
           break;
         }

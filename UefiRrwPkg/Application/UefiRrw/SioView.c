@@ -1,6 +1,6 @@
 /** @file
   Super I/O: probe the LPC config ports 2Eh and 4Eh for Nuvoton/Winbond,
-  Fintek, ITE and SMSC/Microchip parts, list their logical devices, and
+  Fintek, ITE, SMSC/Microchip and ASPEED BMC (AST2400/2500/2600) parts, list their logical devices, and
   edit any logical device's config registers.
 
   Config mode is entered before and left after every access, so the chip is
@@ -16,6 +16,7 @@
 #define SIO_FINTEK   2
 #define SIO_ITE      3
 #define SIO_SMSC     4
+#define SIO_ASPEED   5
 #define MAX_CHIPS    2
 #define MAX_LDN      0x20
 
@@ -46,6 +47,11 @@ STATIC CONST CHAR16  *mNuvotonLdn[] = {
   NULL, L"Deep sleep"
 };
 
+STATIC CONST CHAR16  *mAspeedLdn[] = {
+  NULL, NULL, L"SUART1", L"SUART2", L"System wake-up control", L"KBC", NULL, L"GPIO",
+  NULL, NULL, NULL, L"SUART3", L"SUART4", L"iLPC2AHB", L"Mailbox"
+};
+
 STATIC
 VOID
 SioEnter (
@@ -61,6 +67,10 @@ SioEnter (
       break;
     case SIO_SMSC:
       IoWrite8 (C->Port, 0x55);
+      break;
+    case SIO_ASPEED:
+      IoWrite8 (C->Port, 0xA5);
+      IoWrite8 (C->Port, 0xA5);
       break;
     default:
       IoWrite8 (C->Port, 0x87);
@@ -116,6 +126,33 @@ SioProbe (
 
   ZeroMem (C, sizeof (*C));
   C->Port = Port;
+
+  //
+  // ASPEED BMC Super I/O: A5h A5h unlocks, AAh locks. Lock first so a chip
+  // the firmware left unlocked does not answer every sequence; an ITE part
+  // left unlocked is recognised by its ID below instead.
+  //
+  IoWrite8 (Port, 0xAA);
+  C->Kind = SIO_ASPEED;
+  SioEnter (C);
+  Id = (UINT16)((SioReg (C, 0x20) << 8) | SioReg (C, 0x21));
+  if ((Id != 0xFFFF) && (Id != 0x0000) && ((Id >> 8) < 0x85 || (Id >> 8) > 0x88)) {
+    SioSetReg (C, 0x07, 0x02);
+    if (SioReg (C, 0x07) == 0x02) {
+      C->Id  = Id;
+      C->Rev = 0;
+      SioExit (C);
+      //
+      // A Nuvoton/Winbond/Fintek part does not unlock on A5h; make sure
+      // this is not one that was already unlocked.
+      //
+      if ((UINT16)((SioReg (C, 0x20) << 8) | SioReg (C, 0x21)) == 0xFFFF) {
+        return TRUE;
+      }
+    }
+  }
+
+  SioExit (C);
 
   //
   // Nuvoton / Winbond / Fintek: 87h 87h.
@@ -180,6 +217,7 @@ VendorName (
     case SIO_NUVOTON: return L"Nuvoton/Winbond";
     case SIO_FINTEK:  return L"Fintek";
     case SIO_ITE:     return L"ITE";
+    case SIO_ASPEED:  return L"ASPEED BMC";
     default:          return L"SMSC/Microchip";
   }
 }
@@ -196,6 +234,8 @@ LdnName (
   Name = NULL;
   if ((C->Kind == SIO_ITE) && (Ldn < ARRAY_SIZE (mIteLdn))) {
     Name = mIteLdn[Ldn];
+  } else if ((C->Kind == SIO_ASPEED) && (Ldn < ARRAY_SIZE (mAspeedLdn))) {
+    Name = mAspeedLdn[Ldn];
   } else if ((C->Kind == SIO_NUVOTON) && (Ldn < ARRAY_SIZE (mNuvotonLdn))) {
     Name = mNuvotonLdn[Ldn];
   }
@@ -276,7 +316,7 @@ BuildDoc (
   }
 
   if (mChipCount == 0) {
-    DocAdd (Doc, ATTR_WARN, L"No Super I/O answered on 2Eh/4Eh (Nuvoton/Winbond, Fintek, ITE, SMSC sequences).");
+    DocAdd (Doc, ATTR_WARN, L"No Super I/O answered on 2Eh/4Eh (Nuvoton/Winbond, Fintek, ITE, SMSC, ASPEED sequences).");
     DocAdd (Doc, ATTR_NORMAL, L"Many laptops and servers have none, or keep it behind the EC/BMC.");
     return;
   }
@@ -398,4 +438,25 @@ SioViewRun (
   }
 
   DocFree (&Doc);
+}
+
+/**
+  File > Dump All: Super I/O chips and logical devices.
+**/
+VOID
+SioDump (
+  IN OUT TEXT_DOC  *Out
+  )
+{
+  TEXT_DOC  List;
+  UINTN     Index;
+
+  BuildDoc (&List);
+  DocAdd (Out, ATTR_NORMAL, L"==== Super I/O ====");
+  for (Index = 0; Index < List.Count; Index++) {
+    DocAdd (Out, ATTR_NORMAL, L"%s", List.Lines[Index].Text);
+  }
+
+  DocFree (&List);
+  DocAdd (Out, ATTR_NORMAL, L"");
 }

@@ -1378,3 +1378,32 @@ SmbiosViewRun (
     ShowStruct ((UINTN)Pick);
   }
 }
+
+/**
+  File > Dump All: every SMBIOS structure decoded.
+**/
+VOID
+SmbiosDump (
+  IN OUT TEXT_DOC  *Out
+  )
+{
+  UINTN     Index;
+  TEXT_DOC  *Saved;
+
+  if (!LoadTables ()) {
+    DocAdd (Out, ATTR_NORMAL, L"==== SMBIOS: not found ====");
+    DocAdd (Out, ATTR_NORMAL, L"");
+    return;
+  }
+
+  DocAdd (Out, ATTR_NORMAL, L"==== SMBIOS (%d structures) ====", mStructCount);
+  DocAdd (Out, ATTR_NORMAL, L"%s", mEntryInfo);
+  DocAdd (Out, ATTR_NORMAL, L"");
+  Saved       = gDocCapture;
+  gDocCapture = Out;
+  for (Index = 0; Index < mStructCount; Index++) {
+    ShowStruct (Index);
+  }
+
+  gDocCapture = Saved;
+}

@@ -15,8 +15,9 @@
 #include <Library/MemoryAllocationLib.h>
 #include <Library/PrintLib.h>
 #include <Library/IoLib.h>
+#include <Protocol/SimpleFileSystem.h>
 
-#define UEFIRRW_VERSION  L"0.7.0"
+#define UEFIRRW_VERSION  L"0.8.0"
 
 //
 // Colors
@@ -51,10 +52,15 @@ extern UINTN  gScreenRows;
 #define UI_MOD_CMOS    8
 #define UI_MOD_SIO     9
 #define UI_MOD_EC      10
-#define UI_MOD_HELP    11
-#define UI_MOD_ABOUT   12
-#define UI_MOD_FONT    13
+#define UI_MOD_FILES   11
+#define UI_MOD_EDIT    12
+#define UI_MOD_ABOUT   13
 #define UI_MOD_EXIT    14
+#define UI_ACT_DUMP    15
+#define UI_ACT_SETUP   16
+#define UI_ACT_WARM    17
+#define UI_ACT_COLD    18
+#define UI_MOD_COUNT   13     // ids below this are screens the dispatcher stays in
 
 extern INTN  gUiJump;
 extern INTN  gUiCurrent;
@@ -383,6 +389,138 @@ SioViewRun (
 VOID
 EcViewRun (
   VOID
+  );
+
+VOID
+FileViewRun (
+  VOID
+  );
+
+VOID
+EditViewRun (
+  VOID
+  );
+
+/**
+  Edit Name in the directory Dir (Dir is not closed). Name may not exist yet.
+**/
+VOID
+EditFile (
+  IN EFI_FILE_PROTOCOL  *Dir,
+  IN CONST CHAR16       *Name,
+  IN CONST CHAR16       *Shown
+  );
+
+//
+// FileUtil.c
+//
+EFI_STATUS
+FileOpenImageRoot (
+  OUT EFI_FILE_PROTOCOL  **Root
+  );
+
+EFI_STATUS
+FileWriteAll (
+  IN EFI_FILE_PROTOCOL  *Dir,
+  IN CONST CHAR16       *Name,
+  IN VOID               *Data,
+  IN UINTN              Size
+  );
+
+EFI_STATUS
+FileReadAll (
+  IN  EFI_FILE_PROTOCOL  *Dir,
+  IN  CONST CHAR16       *Name,
+  IN  UINTN              MaxSize,
+  OUT UINT8              **Data,
+  OUT UINTN              *Size
+  );
+
+EFI_STATUS
+FileSaveOnImageVolume (
+  IN CONST CHAR16  *Name,
+  IN VOID          *Data,
+  IN UINTN         Size
+  );
+
+VOID
+FileNextName (
+  IN  CONST CHAR16  *Prefix,
+  IN  CONST CHAR16  *Ext,
+  OUT CHAR16        *Name,
+  IN  UINTN         NameSize
+  );
+
+CONST CHAR16 *
+FileVolumeName (
+  IN EFI_HANDLE  Handle
+  );
+
+CONST CHAR16 *
+FileImageVolumeName (
+  VOID
+  );
+
+UINT8 *
+DocToAscii (
+  IN  TEXT_DOC  *Doc,
+  OUT UINTN     *Size
+  );
+
+extern TEXT_DOC  *gDocCapture;
+
+INTN
+DocFindIn (
+  IN CONST CHAR16  *Text,
+  IN CONST CHAR16  *Pat
+  );
+
+VOID
+PciDump (
+  IN OUT TEXT_DOC  *Doc
+  );
+
+VOID
+AcpiDump (
+  IN OUT TEXT_DOC  *Doc
+  );
+
+VOID
+SmbiosDump (
+  IN OUT TEXT_DOC  *Doc
+  );
+
+VOID
+UsbDump (
+  IN OUT TEXT_DOC  *Doc
+  );
+
+VOID
+SioDump (
+  IN OUT TEXT_DOC  *Doc
+  );
+
+VOID
+UiSaveScreenText (
+  VOID
+  );
+
+VOID
+UiScreenshot (
+  VOID
+  );
+
+VOID
+UiNotify (
+  IN UINTN         Attr,
+  IN CONST CHAR16  *Msg
+  );
+
+BOOLEAN
+UiPromptText (
+  IN     CONST CHAR16  *Prompt,
+  IN OUT CHAR16        *Buf,
+  IN     UINTN         Max
   );
 
 #endif

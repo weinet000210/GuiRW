@@ -1187,3 +1187,27 @@ UsbViewRun (
     Scan = mAuto;
   }
 }
+
+/**
+  File > Dump All: the USB tree.
+**/
+VOID
+UsbDump (
+  IN OUT TEXT_DOC  *Out
+  )
+{
+  TEXT_DOC  Tree;
+  UINTN     Index;
+
+  ScanControllers ();
+  ScanDevices ();
+  ResolveSpeeds ();
+  BuildTree (&Tree);
+  DocAdd (Out, ATTR_NORMAL, L"==== USB (%d controllers, %d devices) ====", mHcCount, mDevCount);
+  for (Index = 0; Index < Tree.Count; Index++) {
+    DocAdd (Out, ATTR_NORMAL, L"%s", Tree.Lines[Index].Text);
+  }
+
+  DocFree (&Tree);
+  DocAdd (Out, ATTR_NORMAL, L"");
+}
