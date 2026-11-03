@@ -1,0 +1,42 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-x64:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: uefirrw
+
+      - name: Checkout edk2
+        uses: actions/checkout@v4
+        with:
+          repository: tianocore/edk2
+          ref: edk2-stable202408
+          path: edk2
+          submodules: false
+
+      - name: Init required edk2 submodules
+        run: |
+          cd edk2
+          git submodule update --init --depth 1 \
+            BaseTools/Source/C/BrotliCompress/brotli \
+            MdePkg/Library/MipiSysTLib/mipisyst
+
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y build-essential nasm uuid-dev acpica-tools python3
+
+      - name: Build BaseTools
+        run: make -C edk2/BaseTools -j"$(nproc)"
+
+      - name: Build uefirrw.efi
+        run: EDK2_DIR="$GITHUB_WORKSPACE/edk2" uefirrw/scripts/build.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uefirrw-X64
+          path: uefirrw/dist/uefirrw.efi
