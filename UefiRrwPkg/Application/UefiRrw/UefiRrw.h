@@ -16,7 +16,7 @@
 #include <Library/PrintLib.h>
 #include <Library/IoLib.h>
 
-#define UEFIRRW_VERSION  L"0.5.1"
+#define UEFIRRW_VERSION  L"0.6.0"
 
 //
 // Colors
@@ -75,6 +75,24 @@ UiSetHelp (
 VOID
 UiShowHelp (
   VOID
+  );
+
+extern BOOLEAN       gDocF7Exit;
+extern UINT16        gDocLastScan;
+extern CONST CHAR16  *gDocFooter;
+
+VOID
+AmlPrepare (
+  IN UINT8   **Tables,
+  IN UINT32  *Lengths,
+  IN UINTN   Count
+  );
+
+VOID
+AmlDisassemble (
+  IN OUT VOID      *Doc,
+  IN     UINT8     *Table,
+  IN     UINT32    Length
   );
 
 VOID

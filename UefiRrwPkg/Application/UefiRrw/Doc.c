@@ -12,6 +12,10 @@
 
 #define DOC_LINE_MAX  320
 
+BOOLEAN       gDocF7Exit;     // DocView returns on F7 (gDocLastScan = SCAN_F7)
+UINT16        gDocLastScan;
+CONST CHAR16  *gDocFooter;    // DocView footer override, NULL = default
+
 VOID
 DocInit (
   OUT TEXT_DOC  *Doc
@@ -221,7 +225,8 @@ DocView (
   Top     = 0;
   Cur     = 0;
   HScroll = 0;
-  UiFrame (Title, L"Up/Down:line  Left/Right:scroll text  Enter:full line  F1:help  Esc:back");
+  gDocLastScan = SCAN_NULL;
+  UiFrame (Title, (gDocFooter != NULL) ? gDocFooter : L"Up/Down:line  Left/Right:scroll text  Enter:full line  F1:help  Esc:back");
   for ( ; ;) {
     Visible = gScreenRows - 4;
     if (Doc->Count == 0) {
@@ -314,7 +319,16 @@ DocView (
         }
 
         break;
+      case SCAN_F7:
+      case SCAN_F2:
+        if (gDocF7Exit) {
+          gDocLastScan = Key.ScanCode;
+          return;
+        }
+
+        break;
       case SCAN_ESC:
+        gDocLastScan = SCAN_ESC;
         return;
       default:
         break;
